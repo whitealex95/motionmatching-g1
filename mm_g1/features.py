@@ -142,12 +142,15 @@ def build_db(lib):
             XtrajDir[rs:re, 2 * k:2 * k + 2] = quat.inv_mul_vec(qh_all[rs:re], headDir[ft])[:, 0:2]
 
     X = np.concatenate([Xpos, Xvel, XtrajPos, XtrajDir], -1)        # (T,27)
-    Xoffset = X.mean(0)
+    # Normalize over LOCOMOTION frames only (skill==0), so the search space statistics match
+    # genoview's loco-only database -- jump frames (a triggered-only extra) don't skew them.
+    m = (lib["skill"] == 0) if "skill" in lib else np.ones(T, bool)
+    Xoffset = X[m].mean(0)
     Xscale = np.concatenate([                                       # one shared std per block
-        np.repeat(Xpos.std(0).mean(), Xpos.shape[1]),
-        np.repeat(Xvel.std(0).mean(), Xvel.shape[1]),
-        np.repeat(XtrajPos.std(0).mean(), XtrajPos.shape[1]),
-        np.repeat(XtrajDir.std(0).mean(), XtrajDir.shape[1])])
+        np.repeat(Xpos[m].std(0).mean(), Xpos.shape[1]),
+        np.repeat(Xvel[m].std(0).mean(), Xvel.shape[1]),
+        np.repeat(XtrajPos[m].std(0).mean(), XtrajPos.shape[1]),
+        np.repeat(XtrajDir[m].std(0).mean(), XtrajDir.shape[1])])
     Xscale = np.where(Xscale < 1e-5, 1.0, Xscale)
     Xn = (X - Xoffset) / Xscale
 

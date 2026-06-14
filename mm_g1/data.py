@@ -64,11 +64,12 @@ def _gmr_rows(name, data_dir):
 
 
 def _load_clip(name, data_dir=C.DATA_DIR, trim=None):
-    """Load a clip and drop its T-pose lead-in/out. `trim` is a (head, tail) frame pair;
-    when None we use the GenoView-style per-clip CLIP_TRIM (falling back to DEFAULT_TRIM)."""
+    """Load a clip and apply its GenoView-matched absolute [start:stop] frame window
+    (CLIP_TRIM). This drops T-pose lead-in/out off walk & run and, crucially, isolates the
+    short stumble EVENT out of the otherwise-ordinary pushAndStumble clip."""
     rows = _gmr_rows(name, data_dir)
-    head, tail = trim if trim is not None else C.CLIP_TRIM.get(name, C.DEFAULT_TRIM)
-    rows = rows[head:len(rows) - tail]       # drop hand-picked T-pose blend frames
+    s, e = trim if trim is not None else C.CLIP_TRIM.get(name, (0, len(rows)))
+    rows = rows[s:min(e, len(rows))]
     return csv_to_qpos(rows)  # (T, 36) wxyz; csv_to_qpos reorders quat xyzw -> wxyz
 
 
@@ -132,6 +133,7 @@ def build_library(clips=None, out=C.LIB_PATH):
         jump_takeoff=np.array(j_takeoff, np.int32),
         jump_land=np.array(j_land, np.int32),
         jump_continues=np.array(j_cont, bool),
+        lib_version=np.array(C.LIB_VERSION),
     )
     print(f"Saved library: {qpos.shape[0]} frames, {len(loaded)} clips "
           f"({len(j_entry)} jumps) -> {out}")
@@ -141,9 +143,9 @@ def build_library(clips=None, out=C.LIB_PATH):
 def load_library(path=C.LIB_PATH):
     if os.path.exists(path):
         d = np.load(path, allow_pickle=True)
-        has_mirror = any("_mirror" in str(n) for n in d["clip_names"]) if "clip_names" in d else False
-        if "skill" not in d.files or (C.MIRROR and not has_mirror):
-            print("Cache is stale (jump/mirror); rebuilding the motion library...")
+        version = int(d["lib_version"]) if "lib_version" in d.files else 0
+        if version != C.LIB_VERSION:
+            print("Cache is stale (library v%d != v%d); rebuilding..." % (version, C.LIB_VERSION))
             os.remove(path)                          # rebuild with the current heuristics
     if not os.path.exists(path):
         build_library(out=path)

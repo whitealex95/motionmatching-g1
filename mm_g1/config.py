@@ -40,19 +40,20 @@ APPROX_BIAS = 0.01             # cKDTree eps: slightly approximate (faster) near
 ROOT_POS_SMOOTH = 15
 ROOT_DIR_SMOOTH = 31
 
-# Every LAFAN1 clip begins and ends in a T-pose (arms out) that blends into the motion.
-# GenoView crops this with per-clip, hand-picked start:stop frame indices rather than a
-# single fixed amount; we mirror that intent here. GenoView's BVH database is 60 fps and
-# its starts are walk=160 / run=172 frames (~2.67 / 2.87 s); our CSVs are 30 fps, so we
-# halve those to 80 / 86 frames. Tails keep the original ~1.5 s (45-frame) T-pose crop.
-# CLIP_TRIM maps clip name -> (head_frames, tail_frames) dropped from the database.
-DEFAULT_TRIM = (45, 45)
+# GenoView-matched absolute [start:stop] frame windows (30 fps; genoview's 60 fps indices
+# halved). These trim the T-pose/calibration off walk & run and -- crucially -- isolate the
+# ~5 s stumble EVENT out of the otherwise-ordinary pushAndStumble clip. Keeping the whole
+# pushAndStumble clip instead leaves thousands of standing/walking frames that the matcher
+# settles into when you STOP, producing a different idle than genoview.
 CLIP_TRIM = {
-    "walk1_subject5": (80, 45),            # GenoView head start 160 @60fps -> 80 @30fps (~2.67 s)
-    "run1_subject5":  (86, 45),            # GenoView head start 172 @60fps -> 86 @30fps (~2.87 s)
-    "pushAndStumble1_subject5": (45, 45),  # full clip minus T-pose ends; deep stumbles are
-                                           # dropped from SEARCH anyway by the min_z filter.
+    "walk1_subject5":            (80, 7759),   # genoview 160-15518 @60fps
+    "run1_subject5":             (86, 7068),   # genoview 172-14136 @60fps
+    "pushAndStumble1_subject5":  (198, 353),   # genoview 397-706  @60fps  (stumble event only)
 }
+
+# Bump when the library build (clips, trims, mirror, labels) changes incompatibly, so a
+# stale data/motion_lib.npz cache is rebuilt automatically. v2: GenoView-matched trims.
+LIB_VERSION = 2
 
 # GenoView trims the last HORIZONS[-1] frames of each clip from the SEARCH only
 # (cKDTree(X[rs:re-30])): the tail still plays out, but a match never lands there, so a
