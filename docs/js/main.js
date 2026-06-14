@@ -17,16 +17,17 @@ async function loadJSON(u) { return (await fetch(u)).json(); }
 async function loadBin(u) { return (await fetch(u)).arrayBuffer(); }
 
 async function boot() {
-  setHud('loading motion database (~13 MB)...');
-  const [model, meta, bin] = await Promise.all([
+  setHud('loading G1 model + motion database (~18 MB)...');
+  const [model, meta, bin, meshMeta, meshBin] = await Promise.all([
     loadJSON(`${DATA}/model.json`), loadJSON(`${DATA}/mm.json`), loadBin(`${DATA}/mm.bin`),
+    loadJSON(`${DATA}/mesh.json`), loadBin(`${DATA}/mesh.bin`),
   ]);
   const A = loadDB(meta, bin);
   const mm = new MotionMatcher(meta, A);
-  start(model.bodies, mm);
+  start(model.bodies, mm, meshMeta, meshBin);
 }
 
-function start(bodies, mm) {
+function start(bodies, mm, meshMeta, meshBuf) {
   // ---- renderer / scene / camera (z-up) ----
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -70,19 +71,25 @@ function start(bodies, mm) {
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // ---- G1 skeleton: a sphere per body + a capsule bone to its parent ----
-  const metal = new THREE.MeshStandardMaterial({ color: 0xb9bcc2, metalness: 0.6, roughness: 0.4 });
+  // ---- G1 full mesh: one Three.js Group per body, holding its visual meshes (body-local).
+  //      FK only moves the groups each frame; the geometry inside is static. ----
   const robot = new THREE.Group();
   scene.add(robot);
-  const joints = bodies.map(() => {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 12), metal);
-    s.castShadow = true; robot.add(s); return s;
-  });
-  const bones = bodies.map((b, i) => {
-    if (b.parent < 0) return null;
-    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 1, 10), metal);
-    c.castShadow = true; robot.add(c); return c;
-  });
+  const bodyGroups = bodies.map(() => { const g = new THREE.Group(); robot.add(g); return g; });
+  for (const gm of meshMeta.geoms) {
+    const pos = new Float32Array(meshBuf, gm.vstart * 12, gm.vcount * 3);             // 3*4 bytes
+    const idx = new Uint16Array(meshBuf, meshMeta.idx_byte_offset + gm.istart * 2, gm.icount);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(gm.rgba[0], gm.rgba[1], gm.rgba[2]),
+      metalness: 0.55, roughness: 0.45, flatShading: true });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    bodyGroups[gm.body].add(mesh);
+  }
   const _yAxis = new THREE.Vector3(0, 1, 0);
 
   // ---- command-trajectory gizmo (red spheres + facing sticks) ----
@@ -133,22 +140,13 @@ function start(bodies, mm) {
     return { move, face, speed: mN > 1e-6 ? mm.MAX_SPEED * (shift ? mm.WALK_SCALE : 1) : 0 };
   }
 
-  // ---- bone placement helper ----
+  // ---- place the body mesh-groups from FK (wxyz quat -> three xyzw) ----
   const vP = new THREE.Vector3(), vC = new THREE.Vector3(), vMid = new THREE.Vector3(), vDir = new THREE.Vector3();
   function place(qpos) {
     const { wp, wq } = fk(bodies, qpos);
-    for (let i = 0; i < bodies.length; i++) joints[i].position.set(wp[i][0], wp[i][1], wp[i][2]);
     for (let i = 0; i < bodies.length; i++) {
-      const c = bones[i]; if (!c) continue;
-      const p = bodies[i].parent;
-      vP.set(wp[p][0], wp[p][1], wp[p][2]); vC.set(wp[i][0], wp[i][1], wp[i][2]);
-      const len = vP.distanceTo(vC);
-      if (len < 1e-5) { c.visible = false; continue; }
-      c.visible = true;
-      vMid.addVectors(vP, vC).multiplyScalar(0.5); c.position.copy(vMid);
-      vDir.subVectors(vC, vP).normalize();
-      c.quaternion.setFromUnitVectors(_yAxis, vDir);
-      c.scale.set(1, len, 1);
+      bodyGroups[i].position.set(wp[i][0], wp[i][1], wp[i][2]);
+      bodyGroups[i].quaternion.set(wq[i][1], wq[i][2], wq[i][3], wq[i][0]);
     }
   }
 

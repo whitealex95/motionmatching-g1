@@ -31,6 +31,8 @@ to `https://<user>.github.io/motionmatching-g1/`.
 ```
 tools/export_web_data.py   (offline, run with the mujoco env)
    ├─ docs/data/model.json  kinematic tree (bodies: parent, local pos/quat, joint axis)
+   ├─ docs/data/mesh.json   per-geom body index + rgba + offsets into mesh.bin
+   ├─ docs/data/mesh.bin    full G1 visual meshes, body-local (positions + uint16 indices, ~4.7 MB)
    ├─ docs/data/mm.json     header: array offsets/shapes + matcher hyperparameters
    └─ docs/data/mm.bin      the feature DB + per-frame pose/sim-root arrays (~13 MB)
 
@@ -58,14 +60,14 @@ difference over 250 frames of run / turn / stop / jump), and the FK matches MuJo
 (Re-run whenever the clips, trims, mirror, or feature math change. `LIB_VERSION` in
 `mm_g1/config.py` controls the native cache; just re-export for the web.)
 
-## Rendering note & roadmap
+## Rendering note
 
-The G1 is drawn as a **capsule skeleton** (a sphere per body + a bone to its parent) rather
-than the full STL meshes — the menagerie meshes total ~35 MB, too heavy to ship as-is. The
-motion is identical either way; only the visuals are simplified. Higher-fidelity options:
+The G1 is drawn with its **full visual meshes**. The raw menagerie STLs total ~35 MB, so
+`export_web_data.py` extracts the geometry straight from the compiled MuJoCo model, bakes
+each mesh into its body-local frame, and ships positions (float32) + `uint16` indices only
+(~4.7 MB); normals are recomputed in the browser (flat shading). One Three.js `Group` per
+body holds its static meshes, and forward kinematics just moves the groups each frame.
 
-- **Decimated glTF meshes** (Draco-compressed) per body, loaded by `fk.js`'s body transforms
-  instead of capsules — pixel-accurate G1, a few MB.
-- **`mujoco_wasm` + Three.js** (what the
-  [php-parkour](https://php-parkour.github.io/) demo uses): load `scene.xml` + the STLs into
-  a WebAssembly MuJoCo build and set `qpos` each frame. Reuses the model exactly; heavier setup.
+For real physics (contacts / balance) you would instead embed
+[`mujoco_wasm`](https://github.com/zalo/mujoco_wasm) and set `qpos` each frame — but it is
+not needed here: the demo is purely kinematic, and mujoco_wasm still renders via Three.js.

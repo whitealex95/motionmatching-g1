@@ -74,6 +74,44 @@ def _fk_numpy(bodies, qpos):
     return wp, wq
 
 
+def export_meshes(m):
+    """Extract every visual mesh from the compiled model into body-local space and write
+    docs/data/mesh.{json,bin}. Positions are float32; indices uint16 (per-geom, 0-based);
+    normals are recomputed in JS (flat shading), so we don't ship them. Each geom records
+    its body index + rgba so the JS renderer can colour and FK-place it."""
+    geoms, pos_chunks, idx_chunks = [], [], []
+    vbase, ibase = 0, 0     # running vertex count, running uint16-index count
+    for g in range(m.ngeom):
+        if m.geom_group[g] != 2 or m.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+            continue
+        mid = int(m.geom_dataid[g])
+        va, nv = int(m.mesh_vertadr[mid]), int(m.mesh_vertnum[mid])
+        fa, nf = int(m.mesh_faceadr[mid]), int(m.mesh_facenum[mid])
+        verts = m.mesh_vert[va:va + nv].astype(np.float64)   # (nv,3), mesh-local frame
+        faces = m.mesh_face[fa:fa + nf].astype(np.int64)     # (nf,3), 0-based within the mesh
+        assert nv < 65536, f"mesh {mid} has {nv} verts (>uint16)"
+        # mesh -> body frame: v_body = geom_pos + R(geom_quat) * v_mesh
+        gp, gq = m.geom_pos[g], m.geom_quat[g]
+        vb = gp + quat.mul_vec(np.tile(gq, (nv, 1)), verts)
+        rgba = (m.mat_rgba[int(m.geom_matid[g])] if m.geom_matid[g] >= 0 else m.geom_rgba[g])
+        geoms.append(dict(body=int(m.geom_bodyid[g]) - 1, vstart=vbase, vcount=nv,
+                          istart=ibase, icount=nf * 3, rgba=[float(c) for c in rgba[:3]]))
+        pos_chunks.append(vb.astype(np.float32))
+        idx_chunks.append(faces.astype(np.uint16))
+        vbase += nv
+        ibase += nf * 3
+
+    positions = np.concatenate(pos_chunks).ravel()           # float32 (vbase*3,)
+    indices = np.concatenate(idx_chunks).ravel()             # uint16  (ibase,)
+    blob = positions.tobytes() + indices.tobytes()
+    meta = dict(nverts=int(vbase), nidx=int(ibase), idx_byte_offset=positions.nbytes, geoms=geoms)
+    json.dump(meta, open(os.path.join(OUT, "mesh.json"), "w"))
+    with open(os.path.join(OUT, "mesh.bin"), "wb") as f:
+        f.write(blob)
+    print(f"  mesh.json + mesh.bin: {len(geoms)} geoms, {vbase} verts, "
+          f"{ibase // 3} tris, {len(blob) / 1e6:.1f} MB")
+
+
 def verify_fk(m, bodies, n_tests=5):
     """Confirm our pure-numpy FK matches MuJoCo's, so the JS port renders correctly."""
     data = mujoco.MjData(m)
@@ -160,6 +198,7 @@ def main():
     json.dump(dict(bodies=bodies, nbody=len(bodies)),
               open(os.path.join(OUT, "model.json"), "w"))
     print(f"  model.json: {len(bodies)} bodies")
+    export_meshes(m)
 
     lib = load_library()
     meta, blob = export_mm(lib)
