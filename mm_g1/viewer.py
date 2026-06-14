@@ -219,9 +219,15 @@ class InteractiveViewer:
         gait = "JUMP" if self.matcher.jumping else \
                ("RUN" if speed > C.MAX_SPEED * (1 + C.WALK_SCALE) / 2 else
                 ("WALK" if speed > 1e-3 else "IDLE"))
-        clip = self.matcher.lib["clip_names"][self.matcher.clip_id[self.matcher.cur]]
+        lib, cur = self.matcher.lib, self.matcher.cur
+        cid = int(lib["clip_id"][cur])
+        clip = lib["clip_names"][cid]
+        # Frame within the clip (and the clip index): both jump discontinuously whenever the
+        # matcher transitions to a new frame, so watching them shows exactly when it "jumps".
+        fic, length = int(lib["frame_in_clip"][cur]), int(lib["lengths"][cid])
         title = f"{gait}   {speed:.1f} m/s"
-        body = (f"clip: {clip}\n"
+        body = (f"clip [{cid}]: {clip}\n"
+                f"frame: {fic}/{length - 1}  (global {cur})\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
                 "WASD move | Shift walk | J jump | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
