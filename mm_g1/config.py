@@ -29,11 +29,16 @@ FOOT_BODIES = ["left_ankle_roll_link", "right_ankle_roll_link"]
 HORIZONS = [10, 20, 30]        # future trajectory taps (frames) ~0.33 / 0.67 / 1.0 s @30fps
 TRAJ_HORIZONS = HORIZONS       # (alias kept for any external reference)
 SEARCH_TIME = 0.15             # seconds between database searches
-INERT_HALFLIFE = 0.10          # inertialization (pose-transition) blend half-life
+INERT_HALFLIFE = 0.075         # inertialization (pose-transition) blend half-life
 VEL_HALFLIFE = 0.2             # desired-trajectory position spring half-life
 ROT_HALFLIFE = 0.2             # desired-trajectory rotation spring half-life
 CURRENT_BIAS = 0.01            # stay-in-clip bias seeded onto the current frame's distance
 APPROX_BIAS = 0.01             # cKDTree eps: slightly approximate (faster) nearest-neighbour
+
+# Savitzky-Golay windows for the smoothed "simulation root" (genoview's 31/61 @60fps,
+# time-matched to our 30 fps). Smooths per-step bob/sway out of the root the matcher tracks.
+ROOT_POS_SMOOTH = 15
+ROOT_DIR_SMOOTH = 31
 
 # Every LAFAN1 clip begins and ends in a T-pose (arms out) that blends into the motion.
 # GenoView crops this with per-clip, hand-picked start:stop frame indices rather than a
@@ -62,8 +67,9 @@ CLIPS = ["walk1_subject5", "run1_subject5", "pushAndStumble1_subject5"]
 MIRROR = True                  # append a left/right-mirrored copy of every clip
 
 # Desired locomotion speed (m/s) fed to the trajectory springs. Full stick = MAX_SPEED
-# (run pace); holding Shift scales it to a walk -- exactly GenoView's 1.8 m/s & 0.4 scale.
-MAX_SPEED = 1.8
+# (run pace; the G1 run clip peaks ~4.3 m/s); holding Shift scales it to a walk -- exactly
+# GenoView's 5.0 m/s & 0.4 scale.
+MAX_SPEED = 5.0
 WALK_SCALE = 0.4
 
 # --- Jump skill (triggered with J) ----------------------------------------------

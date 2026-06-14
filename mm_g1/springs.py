@@ -20,6 +20,16 @@ def DecaySpringDamperPosition(x, v, halflife, dt):
     return (eydt * (x + j1 * dt), eydt * (v - j1 * y * dt))
 
 
+def DecaySpringDamperRotation(x, v, halflife, dt):
+    # x is a quaternion offset, v its angular velocity (copied from genoview.py).
+    y = HalflifeToDamping(halflife) / 2.0
+    j0 = quat.to_scaled_angle_axis(x)
+    j1 = v + j0 * y
+    eydt = np.exp(-y * dt)
+    return (quat.from_scaled_angle_axis(eydt * (j0 + j1 * dt)),
+            eydt * (v - j1 * y * dt))
+
+
 def TrajectorySpringPosition(pos, vel, acc, desiredVel, halflife, dt):
     y = HalflifeToDamping(halflife) / 2.0
     j0 = vel - desiredVel
