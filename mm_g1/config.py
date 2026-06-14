@@ -28,10 +28,22 @@ TRAJ_HORIZONS = [10, 20, 30]   # future sample frames (~0.33 / 0.67 / 1.0 s ahea
 MM_SEARCH_INTERVAL = 15        # frames between nearest-neighbour searches (~0.5 s; fewer pops)
 BLEND_FRAMES = 12              # cross-fade length at a transition (~0.4 s)
 
-# Every LAFAN1 clip begins and ends in a T-pose (arms out) that blends into the motion
-# over ~1.5 s. We DROP the first/last TRIM frames of every clip so the T-pose never
-# appears in the library or the generated motion.
-TRIM = 45
+# Every LAFAN1 clip begins and ends in a T-pose (arms out) that blends into the motion.
+# GenoView crops this with per-clip, hand-picked start:stop frame indices rather than a
+# single fixed amount; we mirror that intent here. GenoView's BVH database is 60 fps and
+# its starts are walk=160 / run=172 frames (~2.67 / 2.87 s); our CSVs are 30 fps, so we
+# halve those to 80 / 86 frames. Tails keep the original ~1.5 s (45-frame) T-pose crop.
+# CLIP_TRIM maps clip name -> (head_frames, tail_frames) dropped from the database.
+DEFAULT_TRIM = (45, 45)
+CLIP_TRIM = {
+    "walk1_subject5": (80, 45),   # GenoView head start 160 @60fps -> 80 @30fps (~2.67 s)
+    "run1_subject5":  (86, 45),   # GenoView head start 172 @60fps -> 86 @30fps (~2.87 s)
+}
+
+# GenoView also drops the LAST second of each clip from the SEARCH only (cKDTree(X[rs:re-60])
+# at 60 fps): the tail still plays out, but the match never lands there, so it can't run off
+# the end of a clip. We replicate that as a search-only exclusion of SEARCH_TAIL frames.
+SEARCH_TAIL = 30   # frames (1.0 s @30fps) excluded from the KD-tree at each clip's end
 
 # The locomotion library: one walk + one run clip (subject5, G1-retargeted LAFAN1).
 # A speed command then steers motion matching smoothly between standing-walk and run.

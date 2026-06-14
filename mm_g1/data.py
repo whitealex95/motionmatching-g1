@@ -11,10 +11,12 @@ from . import config as C
 from .g1_model import G1Model, csv_to_qpos, quat_wxyz_yaw
 
 
-def _load_clip(name, data_dir=C.DATA_DIR, trim=C.TRIM):
+def _load_clip(name, data_dir=C.DATA_DIR, trim=None):
+    """Load a clip and drop its T-pose lead-in/out. `trim` is a (head, tail) frame pair;
+    when None we use the GenoView-style per-clip CLIP_TRIM (falling back to DEFAULT_TRIM)."""
     rows = np.genfromtxt(os.path.join(data_dir, name + ".csv"), delimiter=",")
-    if trim:
-        rows = rows[trim:len(rows) - trim]   # drop T-pose blend frames at both ends
+    head, tail = trim if trim is not None else C.CLIP_TRIM.get(name, C.DEFAULT_TRIM)
+    rows = rows[head:len(rows) - tail]       # drop hand-picked T-pose blend frames
     return csv_to_qpos(rows)  # (T, 36) wxyz
 
 

@@ -13,16 +13,22 @@ live in this one folder. Clone it, run `setup.sh`, and go.
 W / A / S / D    move (relative to the camera)
 Shift (hold)     run instead of walk
 Space            reset to the start pose
+T                toggle the command trajectory gizmo
 left-drag        orbit camera
 right-drag       pan camera
 scroll           zoom
 Esc              quit
 ```
 
+A red **command gizmo** (à la GenoView's `DrawTrajectory`) is drawn on the ground: a
+sphere at each predicted future position with a short stick pointing in the predicted
+facing direction. It shows exactly the trajectory the matcher is being asked to follow —
+press **T** to toggle it.
+
 ## Quick start
 
 ```bash
-git clone <this-repo> motionmatchin-g1
+git clone <this-repo> motionmatching-g1
 cd motionmatchin-g1
 ./setup.sh                      # makes .venv, installs deps, builds the cache
 source .venv/bin/activate
@@ -99,6 +105,12 @@ Edit `mm_g1/config.py`:
 - `MM_SEARCH_INTERVAL` — frames between searches (lower = more reactive, more pops).
 - `CLIPS` — which clips form the library (drop extra CSVs into `data/g1/` and list them
   here; delete `data/motion_lib.npz` to rebuild).
+- `CLIP_TRIM` / `DEFAULT_TRIM` — per-clip `(head, tail)` frames cropped to remove the
+  LAFAN1 T-pose lead-in/out. These mirror GenoView's hand-picked `start:stop` indices
+  (its 60 fps starts of walk=160 / run=172 → our 30 fps 80 / 86); add an entry per new clip.
+- `SEARCH_TAIL` — frames at each clip's end excluded from the *search only* (GenoView's
+  `cKDTree(X[rs:re-60])`): the tail still plays but can't be matched into, so the
+  character never runs off the end of a clip.
 - `--jump-margin` on `run.py` — hysteresis strength (higher = stickier clips, smoother).
 
 ## Credits

@@ -10,6 +10,7 @@ Controls
   W / A / S / D ........ move (forward / left / back / right), relative to the camera
   Shift (hold) ......... run instead of walk
   Space ................ reset to the start pose at the origin
+  T .................... toggle the command trajectory gizmo (GenoView-style)
   Left-drag ............ orbit camera     Right-drag ... pan     Scroll ... zoom
   Esc .................. quit
 """
@@ -19,6 +20,16 @@ import glfw
 import mujoco
 
 from . import config as C
+from .commands import predict_trajectory_world
+from .g1_model import quat_wxyz_yaw
+
+# GenoView draws the command trajectory in red: a sphere at each predicted future
+# position plus a short stick pointing in the predicted facing direction.
+_TRAJ_RGBA = np.array([0.9, 0.1, 0.1, 1.0], np.float32)
+_TRAJ_Z = 0.05          # draw the ground gizmo just above the floor
+_SPHERE_R = 0.05        # GenoView DrawSphere radius
+_STICK_LEN = 0.25       # GenoView facing-stick length
+_STICK_W = 0.012        # facing-stick / connector radius
 
 
 # Movement keys -> bit in a held-key set.
@@ -60,6 +71,9 @@ class InteractiveViewer:
         self.held = set()
         self.shift = False
         self.last_heading = 0.0
+        self.show_traj = True            # draw the command trajectory gizmo (toggle: T)
+        self._speed = 0.0                # latest command, kept for drawing + the HUD
+        self._heading = 0.0
         self._mouse_last = None
         self._button = {"left": False, "right": False}
 
@@ -77,6 +91,8 @@ class InteractiveViewer:
             elif key == glfw.KEY_SPACE:
                 self.matcher.reset()
                 self.last_heading = 0.0
+            elif key == glfw.KEY_T:
+                self.show_traj = not self.show_traj
             elif key in _MOVE_KEYS:
                 self.held.add(key)
         elif action == glfw.RELEASE:
@@ -141,8 +157,8 @@ class InteractiveViewer:
 
             # Advance the matcher at a fixed 30 Hz, independent of render rate.
             while acc >= C.DT:
-                speed, heading = self._command()
-                world = self.matcher.step(speed, heading)
+                self._speed, self._heading = self._command()
+                world = self.matcher.step(self._speed, self._heading)
                 self.data.qpos[:] = world
                 mujoco.mj_forward(self.model, self.data)
                 acc -= C.DT
@@ -155,12 +171,50 @@ class InteractiveViewer:
             viewport = mujoco.MjrRect(0, 0, w, h)
             mujoco.mjv_updateScene(self.model, self.data, self.opt, None, self.cam,
                                    mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+            if self.show_traj:
+                self._draw_command()
             mujoco.mjr_render(viewport, self.scene, self.ctx)
-            self._overlay(viewport, speed)
+            self._overlay(viewport, self._speed)
 
             glfw.swap_buffers(self.window)
             glfw.poll_events()
         glfw.terminate()
+
+    # --- command trajectory gizmo (GenoView DrawTrajectory) ------------------
+    def _draw_command(self):
+        """Append the predicted command path to the scene: a red sphere at each future
+        sample with a short stick pointing in the predicted facing direction."""
+        world_xy = self.data.qpos[0:2].copy()
+        world_yaw = float(quat_wxyz_yaw(self.data.qpos[3:7])[0])
+        pts, dirs = predict_trajectory_world(world_xy, world_yaw, self._speed, self._heading)
+        for (px, py), (dx, dy) in zip(pts, dirs):
+            base = np.array([px, py, _TRAJ_Z])
+            self._add_sphere(base, _SPHERE_R)
+            self._add_stick(base, base + _STICK_LEN * np.array([dx, dy, 0.0]))
+
+    def _next_geom(self):
+        if self.scene.ngeom >= self.scene.maxgeom:
+            return None
+        g = self.scene.geoms[self.scene.ngeom]
+        self.scene.ngeom += 1
+        return g
+
+    def _add_sphere(self, pos, radius):
+        g = self._next_geom()
+        if g is None:
+            return
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_SPHERE,
+                            np.array([radius, 0.0, 0.0]), np.asarray(pos, float),
+                            np.eye(3).flatten(), _TRAJ_RGBA)
+
+    def _add_stick(self, p0, p1):
+        g = self._next_geom()
+        if g is None:
+            return
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_CAPSULE,
+                            np.zeros(3), np.zeros(3), np.eye(3).flatten(), _TRAJ_RGBA)
+        mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, _STICK_W,
+                             np.asarray(p0, float), np.asarray(p1, float))
 
     def _overlay(self, viewport, speed):
         gait = "RUN" if (speed > (C.WALK_SPEED + C.RUN_SPEED) / 2) else \
@@ -168,6 +222,7 @@ class InteractiveViewer:
         clip = self.matcher.lib["clip_names"][self.matcher.clip_id[self.matcher.cur]]
         title = f"{gait}   {speed:.1f} m/s"
         body = (f"clip: {clip}\n"
+                f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
                 "WASD move | Shift run | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,

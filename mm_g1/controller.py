@@ -29,8 +29,11 @@ class MotionMatcher:
         self.fic, self.lengths = lib["frame_in_clip"], lib["lengths"]
         self.clip_id = lib["clip_id"]
         self.jump_margin = jump_margin
-        # search only over upright frames so the match never lands in a degenerate pose
-        self.valid = np.where(lib["qpos"][:, 2] >= min_z)[0]
+        # Search only over upright frames (never land in a degenerate pose) that are also at
+        # least SEARCH_TAIL frames from their clip's end -- GenoView's cKDTree(X[rs:re-60]):
+        # the tail still plays, but the match can't land there and run off the clip.
+        tail_ok = (self.lengths[self.clip_id] - 1 - self.fic) >= C.SEARCH_TAIL
+        self.valid = np.where((lib["qpos"][:, 2] >= min_z) & tail_ok)[0]
         self.tree = cKDTree(self.feat[self.valid])
         self.reset(start_frame)
 
