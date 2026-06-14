@@ -162,28 +162,52 @@ function start(bodies, mm, meshMeta, meshBuf) {
     }
   }
 
-  // ---- fixed-timestep loop ----
+  // ---- fixed-timestep loop with render interpolation ----
+  // The matcher steps at a fixed 30 Hz but the display refreshes at 60-144 Hz; rendering
+  // the latest 30 Hz pose every frame makes the 30 fps motion judder against the smooth
+  // follow-camera (reads as motion blur). So we interpolate the rendered pose between the
+  // two most recent 30 Hz steps by the leftover accumulator fraction -> smooth at any fps.
   const DT = mm.DT;
-  let acc = 0, last = performance.now() / 1000, lastSpeed = 0, qpos = mm.step([0, 0, 0], [0, 0, 0]);
+  const _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(), _qi = new THREE.Quaternion();
+  const _rq = new Float64Array(36);
+  function interp(a, b, t) {                       // a,b: qpos(36); pos lerp, quat slerp, joints lerp
+    for (let i = 0; i < 3; i++) _rq[i] = a[i] + (b[i] - a[i]) * t;
+    _q0.set(a[4], a[5], a[6], a[3]); _q1.set(b[4], b[5], b[6], b[3]);   // wxyz -> three xyzw
+    _qi.slerpQuaternions(_q0, _q1, t);
+    _rq[3] = _qi.w; _rq[4] = _qi.x; _rq[5] = _qi.y; _rq[6] = _qi.z;
+    for (let i = 7; i < 36; i++) _rq[i] = a[i] + (b[i] - a[i]) * t;
+    return _rq;
+  }
+
+  let acc = 0, last = performance.now() / 1000, lastSpeed = 0;
+  let curQ = mm.step([0, 0, 0], [0, 0, 0]), prevQ = curQ;
+  let fps = 0, fpsN = 0, fpsT = last;
   function frame() {
     const now = performance.now() / 1000;
     acc += Math.min(now - last, 0.1); last = now;
     while (acc >= DT) {
       const c = command(); lastSpeed = c.speed;
-      qpos = mm.step(c.move, c.face);
+      prevQ = curQ; curQ = mm.step(c.move, c.face);
       acc -= DT;
     }
-    place(qpos);
+    const rq = interp(prevQ, curQ, acc / DT);       // render one step behind, smoothly
+    place(rq);
     drawGizmo();
 
     // follow camera (keep the pelvis centred; user can still orbit/zoom)
-    controls.target.lerp(new THREE.Vector3(qpos[0], qpos[1], 0.8), 0.2);
+    controls.target.lerp(new THREE.Vector3(rq[0], rq[1], 0.8), 0.2);
     controls.update();
+
+    fpsN++;
+    if (now - fpsT >= 0.5) { fps = fpsN / (now - fpsT); fpsN = 0; fpsT = now; }
 
     const gait = mm.jumping ? 'JUMP' : (lastSpeed > mm.MAX_SPEED * (1 + mm.WALK_SCALE) / 2 ? 'RUN' : (lastSpeed > 1e-3 ? 'WALK' : 'IDLE'));
     const cid = mm._clipOf(mm.cur);
     const fic = mm.cur - mm.starts[cid];
-    setHud(`${gait}  ${lastSpeed.toFixed(1)} m/s\nclip [${cid}]: ${mm.clipNames[cid]}\nframe ${fic} (global ${mm.cur})\n\nWASD move · arrows face · Shift walk\nJ jump · Space reset · T gizmo · drag/scroll camera`);
+    setHud(`${gait}  ${lastSpeed.toFixed(1)} m/s\nclip [${cid}]: ${mm.clipNames[cid]}\nframe ${fic} (global ${mm.cur})\n` +
+      `\nrender ${fps.toFixed(0)} fps · sim ${(1 / DT).toFixed(0)} Hz (${(DT * 1000).toFixed(1)} ms)\n` +
+      `search every ${(mm.SEARCH_TIME * 1000).toFixed(0)} ms\n` +
+      `\nWASD move · arrows face · Shift walk\nJ jump · Space reset · T gizmo · drag/scroll camera`);
 
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
