@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Export the G1 motion-matching database + model skeleton for the browser demo (docs/).
+
+Run from the repo root with the mujoco env, e.g.:
+    ~/miniconda3/envs/deploy_mujoco/bin/python tools/export_web_data.py
+
+Writes:
+  docs/data/model.json  -- kinematic tree (bodies: parent, local pos/quat, joint axis/qadr)
+                           used by the JS forward-kinematics + skeleton renderer.
+  docs/data/mm.json     -- header: per-array {dtype, shape, byte offset} into mm.bin, plus
+                           clip metadata, jump entries, and the loco search-clip indices.
+  docs/data/mm.bin      -- all the runtime arrays the JS matcher needs, concatenated.
+
+The JS matcher (docs/js/mm.js) is a 1:1 port of mm_g1/controller.py + features.build_db,
+so we export exactly the arrays build_db() produces. A self-check verifies our pure-numpy
+FK (the same formula the JS uses) matches MuJoCo before writing.
+"""
+import os
+import sys
+import json
+import numpy as np
+import mujoco
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # repo root
+from mm_g1 import config as C
+from mm_g1.data import load_library
+from mm_g1.features import build_db
+from mm_g1.jumps import jump_entries
+from mm_g1 import quat
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUT = os.path.join(HERE, "docs", "data")
+
+
+# --------------------------------------------------------------------------
+# Model kinematic tree (for the JS forward-kinematics skeleton renderer)
+# --------------------------------------------------------------------------
+def export_model():
+    m = mujoco.MjModel.from_xml_path(C.SCENE_XML)
+    bodies = []
+    for b in range(1, m.nbody):                      # skip world (0)
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b)
+        # the single hinge joint of this body, if any (free joint -> root, axis=None)
+        axis, qadr = None, -1
+        for j in range(m.njnt):
+            if m.jnt_bodyid[j] == b and m.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE:
+                axis = [float(x) for x in m.jnt_axis[j]]
+                qadr = int(m.jnt_qposadr[j])
+                break
+        bodies.append(dict(
+            name=name,
+            parent=int(m.body_parentid[b]) - 1,      # -1 == root (its parent is world)
+            pos=[float(x) for x in m.body_pos[b]],
+            quat=[float(x) for x in m.body_quat[b]],  # wxyz
+            axis=axis, qadr=qadr))
+    return m, bodies
+
+
+def _fk_numpy(bodies, qpos):
+    """The exact FK the JS renderer runs: world pos/quat per body from a (36,) qpos.
+    Root (body 0) uses qpos[0:7]; each child applies body offset then its hinge rotation."""
+    n = len(bodies)
+    wp = np.zeros((n, 3)); wq = np.zeros((n, 4))
+    wp[0], wq[0] = qpos[0:3], qpos[3:7]              # root body == pelvis
+    for i in range(1, n):
+        b = bodies[i]
+        p = b["parent"]
+        lp, lq = np.array(b["pos"]), np.array(b["quat"])
+        wp[i] = wp[p] + quat.mul_vec(wq[p], lp)
+        r = quat.mul(wq[p], lq)
+        if b["axis"] is not None:
+            r = quat.mul(r, quat.from_angle_axis(qpos[b["qadr"]], np.array(b["axis"])))
+        wq[i] = r
+    return wp, wq
+
+
+def verify_fk(m, bodies, n_tests=5):
+    """Confirm our pure-numpy FK matches MuJoCo's, so the JS port renders correctly."""
+    data = mujoco.MjData(m)
+    rng = np.random.RandomState(0)
+    worst = 0.0
+    for _ in range(n_tests):
+        q = np.zeros(m.nq)
+        q[3:7] = [1, 0, 0, 0]
+        q[0:3] = rng.uniform(-1, 1, 3)
+        q[3:7] = quat.normalize(rng.uniform(-1, 1, 4))
+        q[7:] = rng.uniform(-1, 1, m.nq - 7)
+        data.qpos[:] = q
+        mujoco.mj_kinematics(m, data)
+        wp, _ = _fk_numpy(bodies, q)
+        # body i in our list == model body i+1 (we skipped world)
+        worst = max(worst, float(np.abs(wp - data.xpos[1:]).max()))
+    print(f"  FK self-check vs MuJoCo: worst body position error = {worst:.2e} m")
+    assert worst < 1e-6, "JS FK formula would not match MuJoCo!"
+
+
+# --------------------------------------------------------------------------
+# Motion-matching database (everything the JS matcher reads)
+# --------------------------------------------------------------------------
+def export_mm(lib):
+    db = build_db(lib)
+    jump_enter, jump_land_of = jump_entries(lib)
+    starts, stops = db["starts"], db["stops"]
+    skill = lib["skill"] if "skill" in lib else np.zeros(len(db["X"]), np.int32)
+
+    # Search clips = locomotion clips (skill all 0) long enough for a full horizon.
+    H = int(max(C.HORIZONS))
+    search_clips = [int(ci) for ci, (rs, re) in enumerate(zip(starts, stops))
+                    if not skill[rs:re].any() and re - rs > H]
+
+    arrays = {
+        "X": db["X"].astype(np.float32),
+        "Xoffset": db["Xoffset"].astype(np.float32),
+        "Xscale": db["Xscale"].astype(np.float32),
+        "dof": db["dof"].astype(np.float32),
+        "dofVel": db["dofVel"].astype(np.float32),
+        "simPos": db["simPos"].astype(np.float32),
+        "simTheta": db["simTheta"].astype(np.float32),
+        "simVel": db["simVel"].astype(np.float32),
+        "yawRate": db["yawRate"].astype(np.float32),
+        "pelvLocalPos": db["pelvLocalPos"].astype(np.float32),
+        "pelvLocalVel": db["pelvLocalVel"].astype(np.float32),
+        "pelvLocalRot": db["pelvLocalRot"].astype(np.float32),
+        "pelvLocalAng": db["pelvLocalAng"].astype(np.float32),
+        "starts": starts.astype(np.int32),
+        "stops": stops.astype(np.int32),
+        "clip_id": lib["clip_id"].astype(np.int32),
+        "frame_in_clip": lib["frame_in_clip"].astype(np.int32),
+        "lengths": lib["lengths"].astype(np.int32),
+        "skill": skill.astype(np.int32),
+        "jump_enter": np.asarray(jump_enter, np.int32),
+        "jump_land": np.asarray([jump_land_of[int(f)] for f in jump_enter], np.int32),
+        "search_clips": np.asarray(search_clips, np.int32),
+    }
+
+    blob = bytearray()
+    header = {}
+    for name, a in arrays.items():
+        a = np.ascontiguousarray(a)
+        header[name] = dict(dtype=a.dtype.name, shape=list(a.shape), offset=len(blob))
+        blob += a.tobytes()
+
+    meta = dict(
+        fps=C.FPS, ndof=29, horizons=list(map(int, C.HORIZONS)),
+        max_speed=C.MAX_SPEED, walk_scale=C.WALK_SCALE,
+        search_time=C.SEARCH_TIME, current_bias=C.CURRENT_BIAS,
+        inert_halflife=C.INERT_HALFLIFE, vel_halflife=C.VEL_HALFLIFE,
+        rot_halflife=C.ROT_HALFLIFE,
+        phase_touchdown=C.PHASE_TOUCHDOWN, phase_after=C.PHASE_AFTER,
+        clip_names=[str(n) for n in lib["clip_names"]],
+        arrays=header, n_frames=int(len(db["X"])))
+    return meta, bytes(blob)
+
+
+def main():
+    os.makedirs(OUT, exist_ok=True)
+    print("Exporting G1 web demo data -> docs/data/")
+    m, bodies = export_model()
+    verify_fk(m, bodies)
+    json.dump(dict(bodies=bodies, nbody=len(bodies)),
+              open(os.path.join(OUT, "model.json"), "w"))
+    print(f"  model.json: {len(bodies)} bodies")
+
+    lib = load_library()
+    meta, blob = export_mm(lib)
+    json.dump(meta, open(os.path.join(OUT, "mm.json"), "w"))
+    with open(os.path.join(OUT, "mm.bin"), "wb") as f:
+        f.write(blob)
+    print(f"  mm.json + mm.bin: {meta['n_frames']} frames, "
+          f"{len(meta['clip_names'])} clips, {len(blob) / 1e6:.1f} MB")
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
