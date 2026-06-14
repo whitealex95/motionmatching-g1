@@ -1,29 +1,39 @@
-"""Build / load the G1 locomotion library from the LAFAN1 CSVs.
+"""Build / load the G1 locomotion library from the GMR-retargeted LAFAN1 clips.
 
-The library concatenates the walk and run clips into one continuous array and
-precomputes the per-frame heading and FK foot positions that the feature extractor
-needs. It is cached to data/motion_lib.npz so subsequent launches start instantly.
+The library concatenates the walk, run and push-and-stumble clips into one continuous
+array and precomputes the per-frame heading and FK foot positions that the feature
+extractor needs. It is cached to data/motion_lib.npz so subsequent launches start
+instantly. See data/gmr_lafan1_g1/README.md for the source pickle format.
 """
 import os
+import pickle
 import numpy as np
 
 from . import config as C
 from .g1_model import G1Model, csv_to_qpos, quat_wxyz_yaw
 
 
+def _gmr_rows(name, data_dir):
+    """GMR pickle {root_pos (T,3), root_rot (T,4) xyzw, dof_pos (T,29)} -> (T,36) rows in
+    the project's [xyz, quat_xyzw, 29 joints] layout (same as the old CSVs)."""
+    with open(os.path.join(data_dir, name + ".pkl"), "rb") as f:
+        d = pickle.load(f)
+    return np.concatenate([d["root_pos"], d["root_rot"], d["dof_pos"]], axis=1)
+
+
 def _load_clip(name, data_dir=C.DATA_DIR, trim=None):
     """Load a clip and drop its T-pose lead-in/out. `trim` is a (head, tail) frame pair;
     when None we use the GenoView-style per-clip CLIP_TRIM (falling back to DEFAULT_TRIM)."""
-    rows = np.genfromtxt(os.path.join(data_dir, name + ".csv"), delimiter=",")
+    rows = _gmr_rows(name, data_dir)
     head, tail = trim if trim is not None else C.CLIP_TRIM.get(name, C.DEFAULT_TRIM)
     rows = rows[head:len(rows) - tail]       # drop hand-picked T-pose blend frames
-    return csv_to_qpos(rows)  # (T, 36) wxyz
+    return csv_to_qpos(rows)  # (T, 36) wxyz; csv_to_qpos reorders quat xyzw -> wxyz
 
 
 def build_library(clips=None, out=C.LIB_PATH):
     """Concatenate clips into one array; precompute heading and FK foot positions."""
     clips = clips or C.CLIPS
-    clips = [c for c in clips if os.path.exists(os.path.join(C.DATA_DIR, c + ".csv"))]
+    clips = [c for c in clips if os.path.exists(os.path.join(C.DATA_DIR, c + ".pkl"))]
     if not clips:
         raise FileNotFoundError(f"No clips found in {C.DATA_DIR}")
 

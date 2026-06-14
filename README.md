@@ -2,8 +2,8 @@
 
 Steer a **Unitree G1** humanoid around a MuJoCo scene in real time with the keyboard.
 Hold **WASD** and a [motion-matching](https://www.gdcvault.com/play/1023280/Motion-Matching-and-The-Road)
-search stitches retargeted LAFAN1 **walk** and **run** clips into one continuous,
-responsive gait — no neural network, no training, just nearest-neighbour search over a
+search stitches GMR-retargeted LAFAN1 **walk**, **run** and **push-and-stumble** clips
+into one continuous, responsive gait — no neural network, no training, just nearest-neighbour search over a
 pose/trajectory feature database.
 
 This repo is **fully self-contained**: the G1 model, the motion data, and the code all
@@ -93,7 +93,7 @@ motionmatchin-g1/
 │   ├── controller.py            # real-time nearest-neighbour matcher: step(speed, heading)
 │   └── viewer.py                # GLFW + MuJoCo window, held-key input, follow-camera
 ├── assets/unitree_g1/           # MuJoCo G1 model (g1.xml, scene.xml, STL meshes)
-└── data/g1/                     # G1-retargeted LAFAN1 clips (walk1_subject5, run1_subject5)
+└── data/gmr_lafan1_g1/          # GMR-retargeted LAFAN1 clips (walk / run / pushAndStumble, .pkl)
 ```
 
 ## Tuning
@@ -103,8 +103,8 @@ Edit `mm_g1/config.py`:
 - `WALK_SPEED` / `RUN_SPEED` — commanded speeds (m/s) for walk and Shift-run.
 - `TURN_RATE` — how fast the predicted heading chases the input direction.
 - `MM_SEARCH_INTERVAL` — frames between searches (lower = more reactive, more pops).
-- `CLIPS` — which clips form the library (drop extra CSVs into `data/g1/` and list them
-  here; delete `data/motion_lib.npz` to rebuild).
+- `CLIPS` — which clips form the library (drop extra GMR `.pkl` clips into
+  `data/gmr_lafan1_g1/` and list them here; delete `data/motion_lib.npz` to rebuild).
 - `CLIP_TRIM` / `DEFAULT_TRIM` — per-clip `(head, tail)` frames cropped to remove the
   LAFAN1 T-pose lead-in/out. These mirror GenoView's hand-picked `start:stop` indices
   (its 60 fps starts of walk=160 / run=172 → our 30 fps 80 / 86); add an entry per new clip.
@@ -118,6 +118,8 @@ Edit `mm_g1/config.py`:
 - **G1 model** — [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)
   `unitree_g1` (license in `assets/unitree_g1/LICENSE`).
 - **Motion data** — [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset)
-  (Ubisoft La Forge), retargeted to the G1.
+  (Ubisoft La Forge), retargeted to the G1 with
+  [GMR (General Motion Retargeting)](https://github.com/YanjieZe/GMR). See
+  `data/gmr_lafan1_g1/README.md` for the clip list and pickle format.
 - **Approach** — adapted from a MuJoCo G1 motion-matching / motion-graph project and the
   real-time, keyboard-driven control of GenoView's motion-matching demo.
