@@ -31,6 +31,7 @@ class G1Model:
             mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, n)
             for n in C.FOOT_BODIES
         ]
+        self._build_mirror_map()
 
     def fk_feet(self, qpos_seq):
         """World foot positions for each frame -> (T, n_feet, 3)."""
@@ -41,4 +42,37 @@ class G1Model:
             mujoco.mj_kinematics(self.model, self.data)
             for k, bid in enumerate(self.foot_ids):
                 out[t, k] = self.data.xpos[bid]
+        return out
+
+    # --- sagittal mirror (GenoView-style left/right reflection) --------------
+    def _build_mirror_map(self):
+        """For each of the 29 hinge dofs, the qpos index it maps to under a sagittal
+        (y->-y) reflection and its sign. Rule: swap left<->right joints; a rotation about
+        the pitch axis (y) keeps sign, roll (x) / yaw (z) negate. Built from the model so
+        it stays correct if the joint order ever changes."""
+        m = self.model
+        self._mir_src, self._mir_dst, self._mir_sign = [], [], []
+        for j in range(m.njnt):
+            if m.jnt_type[j] != mujoco.mjtJoint.mjJNT_HINGE:
+                continue
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+            twin = (name.replace("left", "right") if "left" in name
+                    else name.replace("right", "left") if "right" in name else name)
+            tid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, twin)
+            sign = 1.0 if abs(m.jnt_axis[j][1]) > 0.5 else -1.0   # +1 pitch(y), -1 roll(x)/yaw(z)
+            self._mir_src.append(m.jnt_qposadr[j])
+            self._mir_dst.append(m.jnt_qposadr[tid])
+            self._mir_sign.append(sign)
+        self._mir_src = np.array(self._mir_src)
+        self._mir_dst = np.array(self._mir_dst)
+        self._mir_sign = np.array(self._mir_sign)
+
+    def mirror_qpos(self, qpos_seq):
+        """Left/right-mirror a (T,36) qpos sequence (wxyz). Root: negate y position and
+        reflect the quaternion (w,x,y,z)->(w,-x,y,-z); joints: swap L/R with per-axis sign."""
+        q = np.atleast_2d(qpos_seq).astype(np.float64)
+        out = q.copy()
+        out[:, 1] = -q[:, 1]                                   # root y -> -y
+        out[:, 4] = -q[:, 4]; out[:, 6] = -q[:, 6]            # root quat (w,-x,y,-z)
+        out[:, self._mir_dst] = self._mir_sign * q[:, self._mir_src]   # swap + sign joints
         return out

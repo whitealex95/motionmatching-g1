@@ -9,7 +9,7 @@ the feature database (data/motion_lib.npz); later launches start instantly.
 
 Controls
   W / A / S / D ........ move, relative to the camera
-  Shift (hold) ......... run instead of walk
+  Shift (hold) ......... walk instead of run (full stick is run pace, GenoView-style)
   J .................... jump (snaps into a jump clip's run-up and rides it through landing)
   Space ................ reset to the start pose
   Left-drag / right-drag / scroll ... orbit / pan / zoom
@@ -27,8 +27,6 @@ from mm_g1.viewer import InteractiveViewer
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--jump-margin", type=float, default=0.35,
-                    help="hysteresis: only switch clips when clearly better (0..1)")
     ap.add_argument("--build-only", action="store_true",
                     help="build/refresh the motion library cache and exit (no window)")
     args = ap.parse_args()
@@ -37,7 +35,7 @@ def main():
     lib = load_library()
     print(f"  {len(lib['qpos'])} frames, clips: {', '.join(map(str, lib['clip_names']))}")
 
-    matcher = MotionMatcher(lib, jump_margin=args.jump_margin)
+    matcher = MotionMatcher(lib)
     print(f"  feature DB ready ({len(matcher.valid)} searchable frames)")
     if args.build_only:
         print("Build complete. Run `python run.py` to control the G1.")

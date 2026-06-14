@@ -80,18 +80,24 @@ def build_library(clips=None, out=C.LIB_PATH):
         raise FileNotFoundError(f"No clips found in {C.DATA_DIR}")
 
     model = G1Model()
-    # Each clip is loaded with its frames, a per-frame skill/phase label, and (for jump
-    # clips) the (entry, takeoff, land, continues) indices that drive the J trigger.
+    # Each base clip is loaded and (GenoView-style) added twice: normal + L/R MIRRORED, for
+    # symmetric left/right coverage. Jump clips are phase-labeled per copy so the mirrored
+    # jump gets its own correct (entry, takeoff, land) indices that drive the J trigger.
     jump_clips = [c for c in C.JUMP_CLIPS
                   if os.path.exists(os.path.join(C.JUMP_DATA_DIR, c + ".csv"))]
-    specs = [(c, False) for c in clips] + [(c, True) for c in jump_clips]   # (name, is_jump)
+    base = [(c, False) for c in clips] + [(c, True) for c in jump_clips]   # (name, is_jump)
+    loaded = []                                      # (name, qpos, is_jump) per concrete clip
+    for name, is_jump in base:
+        q = _load_jump_csv(name) if is_jump else _load_clip(name)
+        loaded.append((name, q, is_jump))
+        if C.MIRROR:
+            loaded.append((name + "_mirror", model.mirror_qpos(q), is_jump))
 
     qpos, clip_id, frame_in_clip, lengths, names = [], [], [], [], []
     skill, phase = [], []
     j_entry, j_takeoff, j_land, j_cont = [], [], [], []
     off = 0
-    for cid, (name, is_jump) in enumerate(specs):
-        q = _load_jump_csv(name) if is_jump else _load_clip(name)
+    for cid, (name, q, is_jump) in enumerate(loaded):
         if is_jump:
             sk, ph, jumps = _label_jump(model, q)
         else:
@@ -127,15 +133,18 @@ def build_library(clips=None, out=C.LIB_PATH):
         jump_land=np.array(j_land, np.int32),
         jump_continues=np.array(j_cont, bool),
     )
-    print(f"Saved library: {qpos.shape[0]} frames, {len(specs)} clips "
+    print(f"Saved library: {qpos.shape[0]} frames, {len(loaded)} clips "
           f"({len(j_entry)} jumps) -> {out}")
     return out
 
 
 def load_library(path=C.LIB_PATH):
-    if os.path.exists(path) and "skill" not in np.load(path, allow_pickle=True).files:
-        print("Cache predates the jump skill; rebuilding the motion library...")
-        os.remove(path)                              # stale pre-jump cache -> rebuild
+    if os.path.exists(path):
+        d = np.load(path, allow_pickle=True)
+        has_mirror = any("_mirror" in str(n) for n in d["clip_names"]) if "clip_names" in d else False
+        if "skill" not in d.files or (C.MIRROR and not has_mirror):
+            print("Cache is stale (jump/mirror); rebuilding the motion library...")
+            os.remove(path)                          # rebuild with the current heuristics
     if not os.path.exists(path):
         build_library(out=path)
     d = np.load(path, allow_pickle=True)

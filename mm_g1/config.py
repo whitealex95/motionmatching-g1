@@ -17,17 +17,23 @@ DT = 1.0 / FPS
 # qpos layout (36-D), shared by the dataset and MuJoCo (same joint order):
 #   [0:3]  root position (x, y, z) in world metres
 #   [3:7]  root orientation quaternion -- DATASET stores xyzw, MuJoCo qpos stores wxyz
-#          (csv_to_qpos / transform_qpos do the reorder; see g1_model.py)
+#          (csv_to_qpos / mirror_qpos handle the reorder; see g1_model.py)
 #   [7:36] 29 joint angles (radians)
 JOINTS = slice(7, 36)
 
 # Foot bodies used for motion-matching pose features (names from menagerie g1.xml).
 FOOT_BODIES = ["left_ankle_roll_link", "right_ankle_roll_link"]
 
-# Motion-matching feature config.
-TRAJ_HORIZONS = [10, 20, 30]   # future sample frames (~0.33 / 0.67 / 1.0 s ahead)
-MM_SEARCH_INTERVAL = 15        # frames between nearest-neighbour searches (~0.5 s; fewer pops)
-BLEND_FRAMES = 12              # cross-fade length at a transition (~0.4 s)
+# --- Motion-matching: GenoView (Holden "Simple Motion Matching") heuristics ----------
+# All math + hyperparameters mirror ../GenoViewPython-MotionMatching/genoview_g1.py.
+HORIZONS = [10, 20, 30]        # future trajectory taps (frames) ~0.33 / 0.67 / 1.0 s @30fps
+TRAJ_HORIZONS = HORIZONS       # (alias kept for any external reference)
+SEARCH_TIME = 0.15             # seconds between database searches
+INERT_HALFLIFE = 0.10          # inertialization (pose-transition) blend half-life
+VEL_HALFLIFE = 0.2             # desired-trajectory position spring half-life
+ROT_HALFLIFE = 0.2             # desired-trajectory rotation spring half-life
+CURRENT_BIAS = 0.01            # stay-in-clip bias seeded onto the current frame's distance
+APPROX_BIAS = 0.01             # cKDTree eps: slightly approximate (faster) nearest-neighbour
 
 # Every LAFAN1 clip begins and ends in a T-pose (arms out) that blends into the motion.
 # GenoView crops this with per-clip, hand-picked start:stop frame indices rather than a
@@ -43,15 +49,22 @@ CLIP_TRIM = {
                                            # dropped from SEARCH anyway by the min_z filter.
 }
 
-# GenoView also drops the LAST second of each clip from the SEARCH only (cKDTree(X[rs:re-60])
-# at 60 fps): the tail still plays out, but the match never lands there, so it can't run off
-# the end of a clip. We replicate that as a search-only exclusion of SEARCH_TAIL frames.
-SEARCH_TAIL = 30   # frames (1.0 s @30fps) excluded from the KD-tree at each clip's end
+# GenoView trims the last HORIZONS[-1] frames of each clip from the SEARCH only
+# (cKDTree(X[rs:re-30])): the tail still plays out, but a match never lands there, so a
+# full future trajectory always exists and the playhead can't run off the clip end.
+SEARCH_TAIL = HORIZONS[-1]   # frames excluded from each clip's KD-tree (1.0 s @30fps)
 
 # The locomotion library: GMR-retargeted LAFAN1 clips (subject5) -- walk, run, and
-# push-and-stumble. A speed command then steers motion matching smoothly between
-# standing-walk, run, and the stumble-recovery variety.
+# push-and-stumble. Each clip is added twice (normal + L/R MIRRORED, GenoView-style) for
+# symmetric left/right coverage. A desired-velocity command then steers motion matching
+# smoothly between standing-walk, run, and the stumble-recovery variety.
 CLIPS = ["walk1_subject5", "run1_subject5", "pushAndStumble1_subject5"]
+MIRROR = True                  # append a left/right-mirrored copy of every clip
+
+# Desired locomotion speed (m/s) fed to the trajectory springs. Full stick = MAX_SPEED
+# (run pace); holding Shift scales it to a walk -- exactly GenoView's 1.8 m/s & 0.4 scale.
+MAX_SPEED = 1.8
+WALK_SCALE = 0.4
 
 # --- Jump skill (triggered with J) ----------------------------------------------
 # CAMDM walk->jump->walk clips (in JUMP_DATA_DIR, 30 fps CSVs, same 36-D layout). They
@@ -67,8 +80,3 @@ PHASE_READY = 12         # run-up before push-off -- the only place a jump can b
 PHASE_TAKEOFF = 10       # ground push-off / loading just before lift-off
 PHASE_TOUCHDOWN = 6      # landing impact, just after the feet hit
 PHASE_AFTER = 18         # landing absorption / recovery walk -- the only place to exit
-
-# Keyboard-control speeds (m/s) used to build the command trajectory each frame.
-WALK_SPEED = 1.2               # base speed when a direction key is held
-RUN_SPEED = 2.6                # speed while Shift is also held (selects the run clip)
-TURN_RATE = 3.0               # rad/s the predicted heading slews toward the input direction

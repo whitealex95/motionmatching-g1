@@ -8,7 +8,7 @@ resulting qpos into MjData and draw. A follow-camera keeps the character centred
 
 Controls
   W / A / S / D ........ move (forward / left / back / right), relative to the camera
-  Shift (hold) ......... run instead of walk
+  Shift (hold) ......... walk instead of run (full stick is run pace, GenoView-style)
   J .................... jump (transitions into a jump clip's run-up, then rides it)
   Space ................ reset to the start pose at the origin
   T .................... toggle the command trajectory gizmo (GenoView-style)
@@ -21,8 +21,6 @@ import glfw
 import mujoco
 
 from . import config as C
-from .commands import predict_trajectory_world
-from .g1_model import quat_wxyz_yaw
 
 # GenoView draws the command trajectory in red: a sphere at each predicted future
 # position plus a short stick pointing in the predicted facing direction.
@@ -146,7 +144,8 @@ class InteractiveViewer:
             return 0.0, self.last_heading       # idle: keep facing, command zero speed
         heading = math.atan2(vy, vx)
         self.last_heading = heading
-        return (C.RUN_SPEED if self.shift else C.WALK_SPEED), heading
+        # Full stick = MAX_SPEED (run pace); holding Shift scales to a walk (GenoView).
+        return C.MAX_SPEED * (C.WALK_SCALE if self.shift else 1.0), heading
 
     # --- main loop -----------------------------------------------------------
     def run(self):
@@ -185,12 +184,9 @@ class InteractiveViewer:
 
     # --- command trajectory gizmo (GenoView DrawTrajectory) ------------------
     def _draw_command(self):
-        """Append the predicted command path to the scene: a red sphere at each future
-        sample with a short stick pointing in the predicted facing direction."""
-        world_xy = self.data.qpos[0:2].copy()
-        world_yaw = float(quat_wxyz_yaw(self.data.qpos[3:7])[0])
-        pts, dirs = predict_trajectory_world(world_xy, world_yaw, self._speed, self._heading)
-        for (px, py), (dx, dy) in zip(pts, dirs):
+        """Append the spring-predicted command trajectory (matcher.Tpos / Tdir) to the
+        scene: a red sphere at each future tap with a short stick along its facing."""
+        for (px, py, _), (dx, dy, _) in zip(self.matcher.Tpos, self.matcher.Tdir):
             base = np.array([px, py, _TRAJ_Z])
             self._add_sphere(base, _SPHERE_R)
             self._add_stick(base, base + _STICK_LEN * np.array([dx, dy, 0.0]))
@@ -221,13 +217,13 @@ class InteractiveViewer:
 
     def _overlay(self, viewport, speed):
         gait = "JUMP" if self.matcher.jumping else \
-               ("RUN" if (speed > (C.WALK_SPEED + C.RUN_SPEED) / 2) else
+               ("RUN" if speed > C.MAX_SPEED * (1 + C.WALK_SCALE) / 2 else
                 ("WALK" if speed > 1e-3 else "IDLE"))
         clip = self.matcher.lib["clip_names"][self.matcher.clip_id[self.matcher.cur]]
         title = f"{gait}   {speed:.1f} m/s"
         body = (f"clip: {clip}\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
-                "WASD move | Shift run | J jump | Space reset\n"
+                "WASD move | Shift walk | J jump | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,
                            mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport,
