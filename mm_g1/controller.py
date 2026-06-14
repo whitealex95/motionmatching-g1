@@ -113,15 +113,18 @@ class MotionMatcher:
         self.animRange, self.animFrame = rng, b
 
     # --- one real-time frame -------------------------------------------------
-    def step(self, speed, heading):
-        """Advance one frame. speed [m/s] and heading [rad] are the desired locomotion this
-        frame; returns the world-space qpos (36,) to display."""
+    def step(self, desiredVel, desiredFace):
+        """Advance one frame. desiredVel is the desired velocity [x,y,0] in m/s (WASD) and
+        desiredFace an independent facing direction [x,y,0] (arrow keys; zero = none), exactly
+        like genoview's left/right stick. Returns the world-space qpos (36,) to display."""
         starts, stops, X = self.starts, self.stops, self.X
 
         # ---- Desired velocity / facing (springs need a target each frame) ----
-        desiredVel = speed * np.array([np.cos(heading), np.sin(heading), 0.0])
-        if speed > 0.01:
-            self.desiredDir = np.array([np.cos(heading), np.sin(heading), 0.0])
+        desiredVel = np.asarray(desiredVel, float)
+        if np.linalg.norm(desiredFace) > 0.01:                 # arrows steer the facing
+            self.desiredDir = np.asarray(desiredFace, float) / np.linalg.norm(desiredFace)
+        elif np.linalg.norm(desiredVel) > 0.01:                # else face the travel direction
+            self.desiredDir = desiredVel / np.linalg.norm(desiredVel)
         desiredRot = yaw_quat(np.arctan2(self.desiredDir[1], self.desiredDir[0]))
 
         # ---- Predict desired trajectory (critically-damped springs) ----

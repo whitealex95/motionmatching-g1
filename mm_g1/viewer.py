@@ -8,6 +8,7 @@ resulting qpos into MjData and draw. A follow-camera keeps the character centred
 
 Controls
   W / A / S / D ........ move (forward / left / back / right), relative to the camera
+  Arrow keys ........... face direction, independent of travel (GenoView-style)
   Shift (hold) ......... walk instead of run (full stick is run pace, GenoView-style)
   J .................... jump (transitions into a jump clip's run-up, then rides it)
   Space ................ reset to the start pose at the origin
@@ -31,8 +32,9 @@ _STICK_LEN = 0.25       # GenoView facing-stick length
 _STICK_W = 0.012        # facing-stick / connector radius
 
 
-# Movement keys -> bit in a held-key set.
+# Movement keys (WASD = travel) and facing keys (arrows = independent facing) -> held set.
 _MOVE_KEYS = {glfw.KEY_W, glfw.KEY_A, glfw.KEY_S, glfw.KEY_D}
+_FACE_KEYS = {glfw.KEY_UP, glfw.KEY_DOWN, glfw.KEY_LEFT, glfw.KEY_RIGHT}
 
 
 class InteractiveViewer:
@@ -69,10 +71,8 @@ class InteractiveViewer:
         # Input state.
         self.held = set()
         self.shift = False
-        self.last_heading = 0.0
         self.show_traj = True            # draw the command trajectory gizmo (toggle: T)
-        self._speed = 0.0                # latest command, kept for drawing + the HUD
-        self._heading = 0.0
+        self._speed = 0.0                # latest command speed, kept for the HUD
         self._mouse_last = None
         self._button = {"left": False, "right": False}
 
@@ -89,12 +89,11 @@ class InteractiveViewer:
                 glfw.set_window_should_close(window, True)
             elif key == glfw.KEY_SPACE:
                 self.matcher.reset()
-                self.last_heading = 0.0
             elif key == glfw.KEY_T:
                 self.show_traj = not self.show_traj
             elif key == glfw.KEY_J:
                 self.matcher.trigger_jump()
-            elif key in _MOVE_KEYS:
+            elif key in _MOVE_KEYS or key in _FACE_KEYS:
                 self.held.add(key)
         elif action == glfw.RELEASE:
             self.held.discard(key)
@@ -128,24 +127,32 @@ class InteractiveViewer:
 
     # --- per-frame command from the keys -------------------------------------
     def _command(self):
-        """Map held WASD (camera-relative) to a desired (speed, heading)."""
+        """Camera-relative WASD -> desired velocity; arrow keys -> an independent facing
+        direction (genoview's left/right stick). Returns (desiredVel[3] m/s, desiredFace[3]
+        unit; facing is zero when no arrow is held, so the controller faces the travel dir)."""
         fwd = math.radians(self.cam.azimuth + 180.0)   # ground heading "into the screen"
         right = fwd - math.pi / 2.0
-        vx = vy = 0.0
-        if glfw.KEY_W in self.held:
-            vx += math.cos(fwd); vy += math.sin(fwd)
-        if glfw.KEY_S in self.held:
-            vx -= math.cos(fwd); vy -= math.sin(fwd)
-        if glfw.KEY_D in self.held:
-            vx += math.cos(right); vy += math.sin(right)
-        if glfw.KEY_A in self.held:
-            vx -= math.cos(right); vy -= math.sin(right)
-        if abs(vx) < 1e-6 and abs(vy) < 1e-6:
-            return 0.0, self.last_heading       # idle: keep facing, command zero speed
-        heading = math.atan2(vy, vx)
-        self.last_heading = heading
-        # Full stick = MAX_SPEED (run pace); holding Shift scales to a walk (GenoView).
-        return C.MAX_SPEED * (C.WALK_SCALE if self.shift else 1.0), heading
+        fdir = np.array([math.cos(fwd), math.sin(fwd), 0.0])
+        rdir = np.array([math.cos(right), math.sin(right), 0.0])
+        move = np.zeros(3)
+        if glfw.KEY_W in self.held: move += fdir
+        if glfw.KEY_S in self.held: move -= fdir
+        if glfw.KEY_D in self.held: move += rdir
+        if glfw.KEY_A in self.held: move -= rdir
+        face = np.zeros(3)
+        if glfw.KEY_UP in self.held:    face += fdir
+        if glfw.KEY_DOWN in self.held:  face -= fdir
+        if glfw.KEY_RIGHT in self.held: face += rdir
+        if glfw.KEY_LEFT in self.held:  face -= rdir
+
+        m = np.linalg.norm(move)
+        if m > 1e-6:   # full stick = MAX_SPEED (run pace); Shift scales to a walk (GenoView)
+            move = move / m * (C.MAX_SPEED * (C.WALK_SCALE if self.shift else 1.0))
+        else:
+            move = np.zeros(3)
+        f = np.linalg.norm(face)
+        face = face / f if f > 1e-6 else np.zeros(3)
+        return move, face
 
     # --- main loop -----------------------------------------------------------
     def run(self):
@@ -159,8 +166,9 @@ class InteractiveViewer:
 
             # Advance the matcher at a fixed 30 Hz, independent of render rate.
             while acc >= C.DT:
-                self._speed, self._heading = self._command()
-                world = self.matcher.step(self._speed, self._heading)
+                vel, face = self._command()
+                self._speed = float(np.linalg.norm(vel))
+                world = self.matcher.step(vel, face)
                 self.data.qpos[:] = world
                 mujoco.mj_forward(self.model, self.data)
                 acc -= C.DT
@@ -229,7 +237,7 @@ class InteractiveViewer:
         body = (f"clip [{cid}]: {clip}\n"
                 f"frame: {fic}/{length - 1}  (global {cur})\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
-                "WASD move | Shift walk | J jump | Space reset\n"
+                "WASD move | arrows face | Shift walk | J jump | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,
                            mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport,
