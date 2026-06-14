@@ -35,8 +35,8 @@ function start(bodies, mm) {
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x8f877c);                  // warm greige (non-blue)
-  scene.fog = new THREE.Fog(0x8f877c, 12, 40);
+  scene.background = new THREE.Color(0x9a9286);                  // warm greige (non-blue)
+  scene.fog = new THREE.Fog(0x9a9286, 35, 110);                 // far fog: near ground stays solid
 
   const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 200);
   camera.up.set(0, 0, 1);
@@ -54,14 +54,21 @@ function start(bodies, mm) {
   sun.shadow.mapSize.set(2048, 2048);
   scene.add(sun);
 
+  // Warm checker floor (procedural texture) -- clearly visible ground + motion reference.
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#7a7165'; cx.fillRect(0, 0, 256, 256);        // light square
+  cx.fillStyle = '#5e564c'; cx.fillRect(0, 0, 128, 128); cx.fillRect(128, 128, 128, 128);  // dark
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(100, 100);                                     // 2 squares / tile -> 1 m squares
+  tex.anisotropy = 8;
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x55504a, roughness: 0.95 }));
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
   floor.receiveShadow = true;
   scene.add(floor);
-  const grid = new THREE.GridHelper(200, 200, 0x6b6359, 0x4a443d);
-  grid.rotation.x = Math.PI / 2;                                 // GridHelper is xz; rotate to xy
-  scene.add(grid);
 
   // ---- G1 skeleton: a sphere per body + a capsule bone to its parent ----
   const metal = new THREE.MeshStandardMaterial({ color: 0xb9bcc2, metalness: 0.6, roughness: 0.4 });
