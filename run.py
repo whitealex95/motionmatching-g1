@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Interactive, keyboard-controlled motion matching for the Unitree G1.
+
+    python run.py
+
+Builds (or loads the cached) locomotion library, opens a MuJoCo window, and lets you
+steer the G1 around with WASD in real time. The first launch spends ~20-40 s building
+the feature database (data/motion_lib.npz); later launches start instantly.
+
+Controls
+  W / A / S / D ........ move, relative to the camera
+  Shift (hold) ......... run instead of walk
+  Space ................ reset to the start pose
+  Left-drag / right-drag / scroll ... orbit / pan / zoom
+  Esc .................. quit
+"""
+import argparse
+import mujoco
+
+from mm_g1 import config as C
+from mm_g1.data import load_library
+from mm_g1.controller import MotionMatcher
+from mm_g1.viewer import InteractiveViewer
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--jump-margin", type=float, default=0.35,
+                    help="hysteresis: only switch clips when clearly better (0..1)")
+    ap.add_argument("--build-only", action="store_true",
+                    help="build/refresh the motion library cache and exit (no window)")
+    args = ap.parse_args()
+
+    print("Loading motion library (first run builds the feature cache)...")
+    lib = load_library()
+    print(f"  {len(lib['qpos'])} frames, clips: {', '.join(map(str, lib['clip_names']))}")
+
+    matcher = MotionMatcher(lib, jump_margin=args.jump_margin)
+    print(f"  feature DB ready ({len(matcher.valid)} searchable frames)")
+    if args.build_only:
+        print("Build complete. Run `python run.py` to control the G1.")
+        return
+
+    model = mujoco.MjModel.from_xml_path(C.SCENE_XML)
+    data = mujoco.MjData(model)
+    print("Opening viewer -- WASD to move, Shift to run, Esc to quit.")
+    InteractiveViewer(model, data, matcher).run()
+
+
+if __name__ == "__main__":
+    main()

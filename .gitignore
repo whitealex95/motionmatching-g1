@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Built motion-matching cache (regenerated from the CSVs on first run)
+data/motion_lib.npz
