@@ -16,6 +16,7 @@ from scipy.spatial import cKDTree
 from . import config as C
 from . import features as F
 from .commands import predict_trajectory
+from .jumps import jump_entries
 from .kinematics import transform_qpos, alignment_to, blend_qpos
 
 
@@ -29,12 +30,18 @@ class MotionMatcher:
         self.fic, self.lengths = lib["frame_in_clip"], lib["lengths"]
         self.clip_id = lib["clip_id"]
         self.jump_margin = jump_margin
-        # Search only over upright frames (never land in a degenerate pose) that are also at
-        # least SEARCH_TAIL frames from their clip's end -- GenoView's cKDTree(X[rs:re-60]):
-        # the tail still plays, but the match can't land there and run off the clip.
+        # skill: 0 = locomotion, 1 = jump (ready..after). Jump frames are kept out of the
+        # search pool so locomotion never matches into a jump; a jump only happens when the
+        # user triggers it, entering via its `ready` run-up (see step / trigger_jump).
+        self.skill = lib["skill"] if "skill" in lib else np.zeros(len(self.qpos), np.int32)
+        # Search only over upright LOCOMOTION frames (never land in a degenerate/jump pose)
+        # that are also at least SEARCH_TAIL frames from their clip's end -- GenoView's
+        # cKDTree(X[rs:re-60]): the tail still plays, but the match can't land there.
         tail_ok = (self.lengths[self.clip_id] - 1 - self.fic) >= C.SEARCH_TAIL
-        self.valid = np.where((lib["qpos"][:, 2] >= min_z) & tail_ok)[0]
+        self.valid = np.where((lib["qpos"][:, 2] >= min_z) & tail_ok & (self.skill == 0))[0]
         self.tree = cKDTree(self.feat[self.valid])
+        # Pre-take-off run-up frames available to the J trigger (continuing jumps only).
+        self.jump_enter, self.jump_land_of = jump_entries(lib)
         self.reset(start_frame)
 
     # --- state ---------------------------------------------------------------
@@ -47,9 +54,30 @@ class MotionMatcher:
         self.frozen = None
         self.blend_left = 0
         self.step_count = 0
+        self.jump_pending = False      # set by trigger_jump(); consumed on the next step
+        self.jump_locked = 0           # >0 while riding a jump clip (no search)
 
     def _is_clip_end(self, i):
         return self.fic[i] >= self.lengths[self.clip_id[i]] - 1
+
+    # --- jump skill ----------------------------------------------------------
+    def trigger_jump(self):
+        """Request a jump (J key). Honoured on the next step if not already jumping."""
+        if self.jump_locked == 0:
+            self.jump_pending = True
+
+    @property
+    def jumping(self):
+        return self.jump_locked > 0
+
+    def _best_jump_entry(self, cur):
+        """Pre-take-off `ready` run-up frame whose features best match the current frame,
+        so the jump is entered from the run-up (not mid-air) with a smooth take-off."""
+        if len(self.jump_enter) == 0:
+            return None
+        d = np.linalg.norm(self.feat[self.jump_enter] - self.feat[cur], axis=1)
+        f = int(self.jump_enter[d.argmin()])
+        return f, self.jump_land_of[f]
 
     def _qstd(self, traj_block, cur):
         """Standardized query: command trajectory + current frame's pose features."""
@@ -72,6 +100,29 @@ class MotionMatcher:
         if self.blend_left > 0:                                   # cross-fade a recent pop
             world = blend_qpos(self.frozen, world, 1 - self.blend_left / C.BLEND_FRAMES)
             self.blend_left -= 1
+
+        # --- jump trigger: snap into the best `ready` run-up and lock the clip in ---
+        if self.jump_pending and self.jump_locked == 0:
+            self.jump_pending = False
+            je = self._best_jump_entry(cur)
+            if je is not None:
+                entry, land = je
+                self.dyaw, self.pivot, self.offset = alignment_to(
+                    self.xy[entry], self.yaw[entry], cwx, cwy)
+                self.frozen, self.blend_left = world.copy(), C.BLEND_FRAMES
+                after_end = land + 1 + C.PHASE_TOUCHDOWN + C.PHASE_AFTER   # ready..after
+                self.cur = entry
+                self.jump_locked = max(1, after_end - entry)
+                self.step_count += 1
+                return world
+
+        # --- ride an in-progress jump through landing (take-off/flight/touchdown) ---
+        if self.jump_locked > 0:
+            if not self._is_clip_end(cur):
+                self.cur = cur + 1
+            self.jump_locked -= 1
+            self.step_count += 1
+            return world
 
         step = self.step_count
         if step > 0 and (step % C.MM_SEARCH_INTERVAL == 0 or self._is_clip_end(cur)):

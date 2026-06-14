@@ -10,6 +10,7 @@ the feature database (data/motion_lib.npz); later launches start instantly.
 Controls
   W / A / S / D ........ move, relative to the camera
   Shift (hold) ......... run instead of walk
+  J .................... jump (snaps into a jump clip's run-up and rides it through landing)
   Space ................ reset to the start pose
   Left-drag / right-drag / scroll ... orbit / pan / zoom
   Esc .................. quit

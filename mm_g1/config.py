@@ -7,6 +7,7 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data", "gmr_lafan1_g1")   # GMR-retargeted LAFAN1 .pkl clips
+JUMP_DATA_DIR = os.path.join(ROOT, "data", "g1_jump")     # CAMDM walk->jump->walk .csv clips
 SCENE_XML = os.path.join(ROOT, "assets", "unitree_g1", "scene.xml")
 LIB_PATH = os.path.join(ROOT, "data", "motion_lib.npz")   # built on first run, then cached
 
@@ -51,6 +52,21 @@ SEARCH_TAIL = 30   # frames (1.0 s @30fps) excluded from the KD-tree at each cli
 # push-and-stumble. A speed command then steers motion matching smoothly between
 # standing-walk, run, and the stumble-recovery variety.
 CLIPS = ["walk1_subject5", "run1_subject5", "pushAndStumble1_subject5"]
+
+# --- Jump skill (triggered with J) ----------------------------------------------
+# CAMDM walk->jump->walk clips (in JUMP_DATA_DIR, 30 fps CSVs, same 36-D layout). They
+# are appended to the library and phase-labeled; a jump is ENTERED only from its run-up
+# (the `ready` phase) and ridden through landing, never matched into during locomotion.
+JUMP_CLIPS = ["walk_jump_walk", "walk_jump_walk2", "walk_jump_stop"]
+JUMP_FOOT_THR = 0.13     # m: both feet above this == airborne (flight detection)
+
+# Five phases carved around each detected flight (frame counts @30fps). A jump is entered
+# only in `ready` (the run-up before push-off) and exited only after `after` (recovery).
+JUMP_PHASES = ["walk", "ready", "takeoff", "flight", "touchdown", "after"]
+PHASE_READY = 12         # run-up before push-off -- the only place a jump can be entered
+PHASE_TAKEOFF = 10       # ground push-off / loading just before lift-off
+PHASE_TOUCHDOWN = 6      # landing impact, just after the feet hit
+PHASE_AFTER = 18         # landing absorption / recovery walk -- the only place to exit
 
 # Keyboard-control speeds (m/s) used to build the command trajectory each frame.
 WALK_SPEED = 1.2               # base speed when a direction key is held

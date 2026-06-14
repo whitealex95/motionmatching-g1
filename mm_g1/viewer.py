@@ -9,6 +9,7 @@ resulting qpos into MjData and draw. A follow-camera keeps the character centred
 Controls
   W / A / S / D ........ move (forward / left / back / right), relative to the camera
   Shift (hold) ......... run instead of walk
+  J .................... jump (transitions into a jump clip's run-up, then rides it)
   Space ................ reset to the start pose at the origin
   T .................... toggle the command trajectory gizmo (GenoView-style)
   Left-drag ............ orbit camera     Right-drag ... pan     Scroll ... zoom
@@ -93,6 +94,8 @@ class InteractiveViewer:
                 self.last_heading = 0.0
             elif key == glfw.KEY_T:
                 self.show_traj = not self.show_traj
+            elif key == glfw.KEY_J:
+                self.matcher.trigger_jump()
             elif key in _MOVE_KEYS:
                 self.held.add(key)
         elif action == glfw.RELEASE:
@@ -217,13 +220,14 @@ class InteractiveViewer:
                              np.asarray(p0, float), np.asarray(p1, float))
 
     def _overlay(self, viewport, speed):
-        gait = "RUN" if (speed > (C.WALK_SPEED + C.RUN_SPEED) / 2) else \
-               ("WALK" if speed > 1e-3 else "IDLE")
+        gait = "JUMP" if self.matcher.jumping else \
+               ("RUN" if (speed > (C.WALK_SPEED + C.RUN_SPEED) / 2) else
+                ("WALK" if speed > 1e-3 else "IDLE"))
         clip = self.matcher.lib["clip_names"][self.matcher.clip_id[self.matcher.cur]]
         title = f"{gait}   {speed:.1f} m/s"
         body = (f"clip: {clip}\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
-                "WASD move | Shift run | Space reset\n"
+                "WASD move | Shift run | J jump | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,
                            mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport,
