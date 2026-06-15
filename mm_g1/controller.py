@@ -125,23 +125,13 @@ class MotionMatcher:
         single-body method; the split exists so callers that already know the future
         trajectory (e.g. path following) can call `step_targets` and reuse the same
         query half without the velocity middle-man."""
-        starts, stops = self.starts, self.stops
         desiredVel = np.asarray(desiredVel, float)
 
         # ---- Part 1: predict the desired trajectory (the search query) ----
         self._predict_trajectory(desiredVel, desiredFace)
 
         # ---- Jump trigger: inertialize into the best `ready` run-up, then lock ----
-        if self.jump_pending and self.jump_locked == 0:
-            self.jump_pending = False
-            entry = self._best_jump_entry()
-            if entry is not None:
-                rng = int(np.searchsorted(starts, entry, "right") - 1)
-                self._inertialize_into(entry, rng)
-                land = self.jump_land_of[entry]
-                after_end = min(land + 1 + C.PHASE_TOUCHDOWN + C.PHASE_AFTER, stops[rng] - 1)
-                self.jump_locked = max(1, after_end - entry)
-                self.searchTimer = C.SEARCH_TIME
+        self._maybe_enter_jump()
 
         # ---- Part 2: match + advance + reconstruct from that query ----
         # desiredVel is forwarded so the root-acceleration bookkeeping (which feeds the
@@ -163,16 +153,37 @@ class MotionMatcher:
         Tdir: (len(HORIZONS), 3) world-frame facing directions, one per horizon.
 
         Everything after the query is `_query_from_trajectory` -- the exact same code
-        step() runs -- so the two stay in sync by construction. Locomotion only (no jump
-        trigger). Returns the world-space qpos (36,)."""
+        step() runs -- so the two stay in sync by construction. A jump requested via
+        trigger_jump() IS honoured here too (same `_maybe_enter_jump` as step), so a
+        path-following caller can leap mid-trajectory. Returns the world-space qpos (36,)."""
         self.Tpos = np.asarray(Tpos, float)
         self.Tdir = np.asarray(Tdir, float)
         d = self.Tdir[-1]
         if np.linalg.norm(d) > 1e-9:
             self.desiredDir = d / np.linalg.norm(d)
+        # Honour a pending jump (no-op unless trigger_jump() was called); while the jump
+        # is locked _query_from_trajectory rides the jump clip and ignores the targets.
+        self._maybe_enter_jump()
         # No desiredVel: the explicit-target path never spring-predicts, so the
         # root-acceleration bookkeeping is left untouched (it only feeds prediction).
         return self._query_from_trajectory()
+
+    def _maybe_enter_jump(self):
+        """If a jump was requested (trigger_jump) and we are not already jumping,
+        inertialize into the best `ready` run-up frame and lock the jump skill for its
+        duration. Shared by step() and step_targets() so a jump can be entered in either
+        drive mode; a no-op when no jump is pending."""
+        if self.jump_pending and self.jump_locked == 0:
+            self.jump_pending = False
+            entry = self._best_jump_entry()
+            if entry is not None:
+                starts, stops = self.starts, self.stops
+                rng = int(np.searchsorted(starts, entry, "right") - 1)
+                self._inertialize_into(entry, rng)
+                land = self.jump_land_of[entry]
+                after_end = min(land + 1 + C.PHASE_TOUCHDOWN + C.PHASE_AFTER, stops[rng] - 1)
+                self.jump_locked = max(1, after_end - entry)
+                self.searchTimer = C.SEARCH_TIME
 
     # --- the two decoupled halves of step() ----------------------------------
     def _predict_trajectory(self, desiredVel, desiredFace):
