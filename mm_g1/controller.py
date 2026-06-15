@@ -208,6 +208,92 @@ class MotionMatcher:
         qpos[7:] = dofOut
         return qpos
 
+    def step_targets(self, Tpos, Tdir):
+        """Like step(), but the future-trajectory query is supplied DIRECTLY as
+        explicit targets rather than spring-predicted from a desired velocity.
+
+        Motion matching internally queries the future trajectory (positions +
+        facings at the HORIZONS taps, i.e. 1/3, 2/3, 1 s ahead) -- step() just
+        builds those from a desired velocity via the trajectory springs. When
+        you already know where the character should be along a path, you can skip
+        the velocity middle-man and hand the future targets in directly.
+
+        Tpos: (len(HORIZONS), 3) world-frame target positions (same frame/units
+              as self.rootPos), one per horizon.
+        Tdir: (len(HORIZONS), 3) world-frame facing directions, one per horizon.
+
+        Everything after the query -- the per-clip KD-tree search, inertialized
+        cut, playhead advance, and root integration from the matched clip -- is
+        identical to step(). Locomotion only (no jump trigger). Returns the
+        world-space qpos (36,). Keep in sync with step() if that changes."""
+        starts, stops, X = self.starts, self.stops, self.X
+
+        # ---- The query trajectory is given, not spring-predicted from velocity ----
+        self.Tpos = np.asarray(Tpos, float)
+        self.Tdir = np.asarray(Tdir, float)
+        d = self.Tdir[-1]
+        if np.linalg.norm(d) > 1e-9:
+            self.desiredDir = d / np.linalg.norm(d)
+
+        # ---- Search (locomotion; jumps are entered only via step()'s trigger) ----
+        if self.jump_locked == 0 and self.searchTimer <= 0.0:
+            qh_ctrl = yaw_quat(self.rootYaw)
+            Xq = self._runtime_features(qh_ctrl)
+            bestRange, bestFrame = self.animRange, self.animFrame
+            if bestFrame < stops[bestRange] - HORIZONS[-1]:
+                best = float(np.linalg.norm(Xq - X[bestFrame]) - C.CURRENT_BIAS)
+            else:
+                best = np.inf
+            for ci, tree, rs in self.search:
+                dist, k = tree.query(Xq, eps=C.APPROX_BIAS, distance_upper_bound=best)
+                if dist < best:
+                    best, bestRange, bestFrame = dist, ci, int(rs + k)
+            if bestRange != self.animRange or bestFrame != self.animFrame:
+                self._inertialize_into(bestFrame, bestRange)
+            self.searchTimer = C.SEARCH_TIME
+
+        # ---- Advance the playhead (identical to step) ----
+        self.animFrame = int(
+            np.clip(self.animFrame + 1, starts[self.animRange], stops[self.animRange] - 1)
+        )
+        self.searchTimer -= DT
+        if self.jump_locked > 0:
+            self.jump_locked -= 1
+            if self.jump_locked == 0:
+                self.searchTimer = 0.0
+        elif self.animFrame >= stops[self.animRange] - 2:
+            self.searchTimer = 0.0
+        f = self.animFrame
+
+        # ---- Integrate controller root from the matched clip's smooth root velocity ----
+        qh_clip = yaw_quat(self.simThetaDB[f])
+        clipVelLocal = quat.inv_mul_vec(qh_clip, self.simVelDB[f])
+        self.rootVel = quat.mul_vec(self.rootRot, clipVelLocal)
+        self.rootAng = np.array([0.0, 0.0, self.yawRateDB[f]])
+        self.rootPos = self.rootPos + self.rootVel * DT
+        self.rootYaw = self.rootYaw + self.yawRateDB[f] * DT
+        self.rootRot = yaw_quat(self.rootYaw)
+
+        # ---- Inertialize joints + pelvis-local offset, then reconstruct the pose ----
+        self.offDof, self.offDofVel = DecaySpringDamperPosition(
+            self.offDof, self.offDofVel, C.INERT_HALFLIFE, DT)
+        self.offPP, self.offPPVel = DecaySpringDamperPosition(
+            self.offPP, self.offPPVel, C.INERT_HALFLIFE, DT)
+        self.offPR, self.offPAng = DecaySpringDamperRotation(
+            self.offPR, self.offPAng, C.INERT_HALFLIFE, DT)
+
+        dofOut = self.dof[f] + self.offDof
+        pelvLocalPos = self.plpDB[f] + self.offPP
+        pelvLocalRot = quat.mul(self.offPR, self.prDB[f])
+        pelvWorldPos = self.rootPos + quat.mul_vec(self.rootRot, pelvLocalPos)
+        pelvWorldRot = quat.mul(self.rootRot, pelvLocalRot)
+
+        qpos = np.empty(36)
+        qpos[0:3] = pelvWorldPos
+        qpos[3:7] = pelvWorldRot
+        qpos[7:] = dofOut
+        return qpos
+
     def _runtime_features(self, qh_ctrl):
         """Query = current frame's pose blocks (from X) + the desired trajectory, normalized
         the same way as the database (genoview runtime_features)."""
