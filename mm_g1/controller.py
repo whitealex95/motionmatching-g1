@@ -116,11 +116,73 @@ class MotionMatcher:
     def step(self, desiredVel, desiredFace):
         """Advance one frame. desiredVel is the desired velocity [x,y,0] in m/s (WASD) and
         desiredFace an independent facing direction [x,y,0] (arrow keys; zero = none), exactly
-        like genoview's left/right stick. Returns the world-space qpos (36,) to display."""
-        starts, stops, X = self.starts, self.stops, self.X
+        like genoview's left/right stick. Returns the world-space qpos (36,) to display.
+
+        This is just the two decoupled halves run back to back, with the jump trigger
+        in between: predict the future-trajectory query from the desired velocity/facing
+        (`_predict_trajectory`), then match + advance + reconstruct from that query
+        (`_query_from_trajectory`). The behaviour is byte-identical to the original
+        single-body method; the split exists so callers that already know the future
+        trajectory (e.g. path following) can call `step_targets` and reuse the same
+        query half without the velocity middle-man."""
+        starts, stops = self.starts, self.stops
+        desiredVel = np.asarray(desiredVel, float)
+
+        # ---- Part 1: predict the desired trajectory (the search query) ----
+        self._predict_trajectory(desiredVel, desiredFace)
+
+        # ---- Jump trigger: inertialize into the best `ready` run-up, then lock ----
+        if self.jump_pending and self.jump_locked == 0:
+            self.jump_pending = False
+            entry = self._best_jump_entry()
+            if entry is not None:
+                rng = int(np.searchsorted(starts, entry, "right") - 1)
+                self._inertialize_into(entry, rng)
+                land = self.jump_land_of[entry]
+                after_end = min(land + 1 + C.PHASE_TOUCHDOWN + C.PHASE_AFTER, stops[rng] - 1)
+                self.jump_locked = max(1, after_end - entry)
+                self.searchTimer = C.SEARCH_TIME
+
+        # ---- Part 2: match + advance + reconstruct from that query ----
+        # desiredVel is forwarded so the root-acceleration bookkeeping (which feeds the
+        # NEXT frame's trajectory prediction) is updated exactly as before.
+        return self._query_from_trajectory(desiredVel)
+
+    def step_targets(self, Tpos, Tdir):
+        """Like step(), but the future-trajectory query is supplied DIRECTLY as explicit
+        targets rather than spring-predicted from a desired velocity.
+
+        Motion matching internally queries the future trajectory (positions + facings at
+        the HORIZONS taps, i.e. 1/3, 2/3, 1 s ahead); step() just builds those from a
+        desired velocity via the trajectory springs. When you already know where the
+        character should be along a path, hand the future targets in directly and skip
+        the velocity middle-man.
+
+        Tpos: (len(HORIZONS), 3) world-frame target positions (same frame/units as
+              self.rootPos), one per horizon.
+        Tdir: (len(HORIZONS), 3) world-frame facing directions, one per horizon.
+
+        Everything after the query is `_query_from_trajectory` -- the exact same code
+        step() runs -- so the two stay in sync by construction. Locomotion only (no jump
+        trigger). Returns the world-space qpos (36,)."""
+        self.Tpos = np.asarray(Tpos, float)
+        self.Tdir = np.asarray(Tdir, float)
+        d = self.Tdir[-1]
+        if np.linalg.norm(d) > 1e-9:
+            self.desiredDir = d / np.linalg.norm(d)
+        # No desiredVel: the explicit-target path never spring-predicts, so the
+        # root-acceleration bookkeeping is left untouched (it only feeds prediction).
+        return self._query_from_trajectory()
+
+    # --- the two decoupled halves of step() ----------------------------------
+    def _predict_trajectory(self, desiredVel, desiredFace):
+        """[Predict desired trajectory] Turn a desired velocity + facing into the
+        future-trajectory query the search runs against: sets self.desiredDir and the
+        critically-damped spring predictions self.Tpos / self.Tdir at the HORIZONS taps.
+        Pure prediction -- it does not touch the playhead or the matched clip."""
+        desiredVel = np.asarray(desiredVel, float)
 
         # ---- Desired velocity / facing (springs need a target each frame) ----
-        desiredVel = np.asarray(desiredVel, float)
         if np.linalg.norm(desiredFace) > 0.01:                 # arrows steer the facing
             self.desiredDir = np.asarray(desiredFace, float) / np.linalg.norm(desiredFace)
         elif np.linalg.norm(desiredVel) > 0.01:                # else face the travel direction
@@ -135,17 +197,16 @@ class MotionMatcher:
             self.rootRot, self.rootAng, desiredRot, C.ROT_HALFLIFE, dt_col)
         self.Tdir = quat.mul_vec(Trot, FORWARD)
 
-        # ---- Jump trigger: inertialize into the best `ready` run-up, then lock ----
-        if self.jump_pending and self.jump_locked == 0:
-            self.jump_pending = False
-            entry = self._best_jump_entry()
-            if entry is not None:
-                rng = int(np.searchsorted(starts, entry, "right") - 1)
-                self._inertialize_into(entry, rng)
-                land = self.jump_land_of[entry]
-                after_end = min(land + 1 + C.PHASE_TOUCHDOWN + C.PHASE_AFTER, stops[rng] - 1)
-                self.jump_locked = max(1, after_end - entry)
-                self.searchTimer = C.SEARCH_TIME
+    def _query_from_trajectory(self, desiredVel=None):
+        """[Query from trajectory (command)] Given the query trajectory already set in
+        self.Tpos / self.Tdir, run the per-clip KD-tree search (inertialized cut), advance
+        the playhead, integrate the controller root from the matched clip, and reconstruct
+        the world-space pose. Returns the qpos (36,).
+
+        desiredVel (optional): only used for the root-acceleration bookkeeping that feeds
+        the NEXT frame's `_predict_trajectory`. step() passes it; step_targets leaves it
+        None (the explicit-target path never spring-predicts, so rootAcc is irrelevant)."""
+        starts, stops, X = self.starts, self.stops, self.X
 
         # ---- Search (skipped while riding a jump) ----
         if self.jump_locked == 0 and self.searchTimer <= 0.0:
@@ -177,8 +238,9 @@ class MotionMatcher:
         f = self.animFrame
 
         # ---- Integrate controller root from the matched clip's smooth root velocity ----
-        _, _, self.rootAcc = TrajectorySpringPosition(
-            self.rootPos, self.rootVel, self.rootAcc, desiredVel, C.ROT_HALFLIFE, DT)
+        if desiredVel is not None:
+            _, _, self.rootAcc = TrajectorySpringPosition(
+                self.rootPos, self.rootVel, self.rootAcc, desiredVel, C.ROT_HALFLIFE, DT)
         qh_clip = yaw_quat(self.simThetaDB[f])
         clipVelLocal = quat.inv_mul_vec(qh_clip, self.simVelDB[f])
         self.rootVel = quat.mul_vec(self.rootRot, clipVelLocal)
