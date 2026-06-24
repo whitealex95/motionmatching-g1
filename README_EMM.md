@@ -79,10 +79,18 @@ T                toggle the command-trajectory gizmo
 Esc              quit (MuJoCo)
 ```
 
-There is **no jump key** — walk into a wall and the G1 jumps it.
+There is **no jump key** — **walk** (hold Shift) into a wall and the G1 jumps it.
+
+Walk/run speed matches the original `index.html` demo (`MAX_SPEED` and `WALK_SCALE`
+are imported from `mm_g1/config.py`): full stick = run (5 m/s), Shift = walk
+(2 m/s). The auto-jump fires at **walk** pace — the dataset's jump clips are
+`walk→jump→walk` (no sprint-jump), so at full run the matcher tracks the run clip
+and does not hop. Hold Shift to clear a hurdle.
 
 ## Tuning (`emm_g1/config.py`)
 
+- `MAX_SPEED` / `WALK_SCALE` — imported from `mm_g1/config.py` so both demos move
+  at the same walk/run pace; the jump fires at walk pace (see above).
 - `PENALTY_WEIGHT` — obstacle-penalization strength (≈60; higher = more eager to jump).
 - `EVASION` / `ANTICIPATION` — facing relaxation near obstacles / penalty scaling with speed.
 - `WALL_HEIGHT` / `WALL_HALF_LEN` / `WALL_HALF_THICK` — hurdle geometry (low, wide, thin).

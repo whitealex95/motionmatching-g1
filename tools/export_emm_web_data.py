@@ -85,7 +85,7 @@ def export_emm(db):
     meta = dict(
         fps=int(__import__('emm_g1.g1_model', fromlist=['FPS']).FPS),
         ndof=29, horizons=[int(h) for h in __import__('emm_g1.g1_model', fromlist=['HORIZONS']).HORIZONS],
-        max_speed=EC.MAX_SPEED, walk_scale=0.4,
+        max_speed=EC.MAX_SPEED, walk_scale=EC.WALK_SCALE,
         search_time=EC.SEARCH_TIME, inert_halflife=EC.INERT_HALFLIFE,
         vel_halflife=EC.VEL_HALFLIFE, rot_halflife=EC.ROT_HALFLIFE,
         penalty_weight=EC.PENALTY_WEIGHT, evasion=EC.EVASION, anticipation=EC.ANTICIPATION,

@@ -8,9 +8,16 @@ phase, so the env-aware search hops over it automatically (no trigger).
 import numpy as np
 
 from . import obstacles as OB
+from mm_g1 import config as _mmC
 
 # --- Controller defaults (reference height/jump scenario) ----------------------
-MAX_SPEED = 1.7          # m/s at full stick (jump run-up pace)
+# Walk/run speed is sourced from the mm_g1 (index.html) demo so the two demos move
+# at the SAME pace: full stick = MAX_SPEED (run), Shift = MAX_SPEED*WALK_SCALE (walk).
+# NOTE: the dataset's jump clips are walk->jump->walk (no sprint-jump), so the
+# auto-jump fires at WALK pace (hold Shift into a wall); at full run the matcher
+# tracks the run clip and does not hop.
+MAX_SPEED = _mmC.MAX_SPEED      # 5.0 m/s -- identical to mm_g1 / index.html
+WALK_SCALE = _mmC.WALK_SCALE    # 0.4    -- Shift -> walk pace (identical to mm_g1)
 SEARCH_TIME = 0.12       # seconds between env-aware searches
 INERT_HALFLIFE = 0.10
 VEL_HALFLIFE = 0.25

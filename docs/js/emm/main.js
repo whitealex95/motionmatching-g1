@@ -198,7 +198,7 @@ function start(bodies, mm, meta, meshMeta, meshBuf) {
       `clip: ${mm.clipName()}   frame ${mm.cur}\n` +
       `\nrender ${fps.toFixed(0)} fps · sim ${(1 / DT).toFixed(0)} Hz · search every ${(mm.SEARCH_TIME * 1000).toFixed(0)} ms\n` +
       `\nWASD move · arrows face · Shift walk · Space reset · T gizmo · drag/scroll camera\n` +
-      `the G1 hops the low walls by itself — no jump key`);
+      `WALK (Shift) into a wall and the G1 hops it by itself — no jump key`);
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }

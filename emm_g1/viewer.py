@@ -32,7 +32,7 @@ _STICK_W = 0.012
 _MOVE_KEYS = {glfw.KEY_W, glfw.KEY_A, glfw.KEY_S, glfw.KEY_D}
 _FACE_KEYS = {glfw.KEY_UP, glfw.KEY_DOWN, glfw.KEY_LEFT, glfw.KEY_RIGHT}
 
-WALK_SCALE = 0.4   # Shift -> walk pace (fraction of full stick)
+WALK_SCALE = EC.WALK_SCALE   # Shift -> walk pace (same as mm_g1 / index.html)
 
 
 def _axis_mat(ax, ay):
@@ -214,6 +214,7 @@ class EMMViewer:
         body = (f"clip: {self.ctrl.clip_name()}\n"
                 f"frame: {self.ctrl.cur}\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
+                "WALK (Shift) into a wall and the G1 hops it -- no jump key\n"
                 "WASD move | arrows face | Shift walk | Space reset\n"
                 "drag orbit | right-drag pan | scroll zoom | Esc quit")
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL,
