@@ -6,3 +6,5 @@ __pycache__/
 
 # Built motion-matching cache (regenerated from the CSVs on first run)
 data/motion_lib.npz
+# Built environment-aware (EMM) feature cache (regenerated on first run)
+data/emm_lib.npz

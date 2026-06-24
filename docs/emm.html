@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>G1 Environment-aware Motion Matching — auto-jump demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #8f877c;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    #hud { position: fixed; top: 12px; left: 14px; z-index: 10; color: #f4efe7;
+      font-size: 13px; line-height: 1.45; white-space: pre; pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,.55); }
+    #title { position: fixed; bottom: 12px; right: 14px; z-index: 10; color: #e9e2d6;
+      font-size: 12px; text-align: right; text-shadow: 0 1px 2px rgba(0,0,0,.55); opacity: .85; }
+    #title a { color: #ffd9a0; }
+    canvas { display: block; }
+  </style>
+  <!-- three.js vendored locally (shared with the GenoView demo) -- no CDN. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="hud">loading…</div>
+  <div id="title">Unitree G1 · Environment-aware Motion Matching (in-browser)<br>
+    WASD move · arrows face · Shift walk · Space reset · the G1 jumps the walls by itself</div>
+  <script type="module" src="./js/emm/main.js"></script>
+</body>
+</html>
