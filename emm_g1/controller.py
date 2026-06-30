@@ -43,7 +43,7 @@ class EMMController:
     def __init__(self, db, env=None, weights=None, max_speed=1.7,
                  search_time=0.12, inert_halflife=0.10, vel_halflife=0.25,
                  rot_halflife=0.25, penalty_weight=18.0, evasion=None,
-                 anticipation=2.0, start_frame=None):
+                 anticipation=2.0, start_frame=None, trigger_dist=0.85):
         self.db = S.prepare(db)
         self.env = env
         self.height_mode = bool(np.asarray(db['height_mode']))
@@ -60,6 +60,17 @@ class EMMController:
         # (reference Search .asset values).
         self.evasion = (0.54 if self.height_mode else 0.01) if evasion is None else evasion
         self.anticipation = anticipation
+
+        # --- Jump skill bucket: a separate bucket from locomotion (mm_g1 style).
+        # The search runs over locomotion frames only (loco_mask); the jump is
+        # entered through its run-up when an obstacle sits in the take-off window
+        # ahead -- the obstacle replaces mm_g1's J key. ---
+        from . import jumps as _J
+        self.jump_enter, self.jump_land_of, self.jump_end_of, self.jump_apex_of = _J.jump_index(db)
+        self.loco_mask = ~np.asarray(db['clip_is_jump'], bool)[db['clip_id']]
+        self.trigger_dist = float(trigger_dist)
+        self.jump_locked = 0
+        self._prev_fd = np.inf
 
         self.starts, self.stops = db['starts'], db['stops']
         self.Xn, self.Xmean, self.Xstd = db['Xn'], db['Xmean'], db['Xstd']
@@ -96,6 +107,8 @@ class EMMController:
         self.offDof = np.zeros(g1.NDOF); self.offDofVel = np.zeros(g1.NDOF)
         self.offH = 0.0; self.offHVel = 0.0
         self.searchTimer = 0.0
+        self.jump_locked = 0
+        self._prev_fd = np.inf
         self.target_speed = 0.0
         self.w = self.w0.copy()
         self.Tpos = np.tile(self.rootPos, (len(g1.HORIZONS), 1))
@@ -107,7 +120,9 @@ class EMMController:
 
     @property
     def jumping(self):
-        return bool(self.db['clip_is_jump'][self.animClip]) and self.rootPosDB[self.animFrame, 2] > 0.0
+        # True only while riding the jump skill (run-up -> flight -> landing),
+        # not merely when the playhead happens to sit in a jump clip.
+        return self.jump_locked > 0
 
     def clip_name(self, f=None):
         return str(self.db['clip_names'][self._clip_of(self.animFrame if f is None else f)])
@@ -121,6 +136,47 @@ class EMMController:
         trajDir = quat.inv_mul_vec(qh_ctrl, Tdir)[:, 0:2].ravel()
         q = np.concatenate([trajPos, trajDir, pose])
         return ((q - self.Xmean) / self.Xstd).astype(np.float32)
+
+    # -- jump bucket (obstacle-triggered, mm_g1-style run-up + lock) --
+    def _forward_obstacle_dist(self):
+        """Nearest forward distance (m) to an obstacle whose height band a standing
+        body overlaps, along the current facing; ``inf`` if none ahead. An obstacle
+        in the take-off window arms the auto-jump (replaces mm_g1's J key)."""
+        if self.env is None:
+            return np.inf
+        fdir = np.array([np.cos(self.rootYaw), np.sin(self.rootYaw)])
+        perp = np.array([-fdir[1], fdir[0]])
+        best = np.inf
+        for o in self.env.obstacles:
+            if o.height[0] > 1.3 or o.height[1] < 0.0:     # not in standing-body band
+                continue
+            rel = o.center - self.rootPos[0:2]
+            fwd = float(rel @ fdir)
+            if fwd <= 0.0:                                  # behind us
+                continue
+            reach = (float(max(o.ext)) if o.is_ellipse else o.radius) + 0.5
+            if abs(float(rel @ perp)) > reach:             # off to the side
+                continue
+            best = min(best, fwd)
+        return best
+
+    def _best_jump_entry(self):
+        """Run-up frame whose features best continue the current pose, so the jump
+        is entered from the run-up (smooth take-off), not mid-stride."""
+        if len(self.jump_enter) == 0:
+            return None
+        d = np.linalg.norm(self.Xn[self.jump_enter] - self.Xn[self.animFrame], axis=1)
+        return int(self.jump_enter[int(d.argmin())])
+
+    def _switch_to(self, b):
+        """Inertialize the pose discontinuity from the current frame into frame ``b``
+        and move the playhead there (same offsets the env search uses)."""
+        a = self.animFrame
+        self.offDof = (self.offDof + self.dof[a]) - self.dof[b]
+        self.offDofVel = (self.offDofVel + self.dofVel[a]) - self.dofVel[b]
+        self.offH = (self.offH + self.rootPosDB[a, 2]) - self.rootPosDB[b, 2]
+        self.animFrame = b
+        self.animClip = self._clip_of(b)
 
     # -- one real-time frame --
     def step(self, left_stick, right_stick):
@@ -149,14 +205,32 @@ class EMMController:
             circ, ell = self.env.get_nearby(self.rootPos[0:2], self.rootYaw,
                                             self.height_mode, tap_world=Tpos[:, 0:2])
 
-        # Search (rate limited): env-aware nearest pose.
-        if self.searchTimer <= 0.0:
+        # Jump bucket trigger: arm a jump when the wall ahead is exactly the distance
+        # the best-matching run-up clip travels from entry to its flight apex, so the
+        # apex (whole body above the wall band) lands over the wall. Entered from the
+        # run-up and ridden through flight + landing (search locked) -- like mm_g1's J
+        # key, but auto-triggered and auto-timed by the obstacle.
+        if self.jump_locked == 0 and self.env is not None:
+            fd = self._forward_obstacle_dist()
+            # Fire the instant the wall crosses the take-off distance, so every wall
+            # is launched from the same spot and the flight's whole-body-clear window
+            # lands over it. Enter from the run-up that best continues the pose.
+            if self._prev_fd > self.trigger_dist >= fd:
+                entry = self._best_jump_entry()
+                if entry is not None:
+                    self._switch_to(entry)
+                    self.jump_locked = max(1, self.jump_end_of[entry] - entry)
+                    self.searchTimer = self.SEARCH_TIME
+            self._prev_fd = fd
+
+        # Search (rate limited, LOCOMOTION bucket only): env-aware nearest pose.
+        if self.jump_locked == 0 and self.searchTimer <= 0.0:
             qh_ctrl = g1.yaw_quat(self.rootYaw)
             Xq = self._query(Tpos, Tdir, qh_ctrl)
             pw = self.penalty_weight * self.anticipation * max(0.5, self.target_speed)
             best = S.search_env(db, Xq, self.w, pw, circ, ell,
                                 self.env.threshold if self.env else 0.6,
-                                self.height_mode)
+                                self.height_mode, cand_mask=self.loco_mask)
             if best != self.animFrame:
                 self.offDof = (self.offDof + self.dof[self.animFrame]) - self.dof[best]
                 self.offDofVel = (self.offDofVel + self.dofVel[self.animFrame]) - self.dofVel[best]
@@ -172,7 +246,11 @@ class EMMController:
         self.animFrame = int(np.clip(self.animFrame + 1,
                                      starts[self.animClip], stops[self.animClip] - 1))
         self.searchTimer -= g1.DT
-        if self.animFrame >= stops[self.animClip] - 2:
+        if self.jump_locked > 0:
+            self.jump_locked -= 1
+            if self.jump_locked == 0:
+                self.searchTimer = 0.0           # search out of the jump at once
+        elif self.animFrame >= stops[self.animClip] - 2:
             self.searchTimer = 0.0
 
         # Integrate controller root from the matched clip's root velocity.

@@ -52,10 +52,13 @@ function featureCheck(db, i, sqr, bestTotal, penaltyWeight, circ, ell, threshold
   return sqr;
 }
 
-export function searchEnv(db, Xq, weights, penaltyWeight, circ, ell, threshold, heightMode) {
+// candMask (optional Uint8Array, T): restrict the candidate pool. EMM passes a
+// locomotion-only mask so the search never matches into a jump clip (jumps are a
+// separate skill bucket entered via the obstacle trigger -- see controller.js).
+export function searchEnv(db, Xq, weights, penaltyWeight, circ, ell, threshold, heightMode, candMask = null) {
   const T = db.T;
   const sd = staticDistances(db.Xn, Xq, weights, T);
-  for (let t = 0; t < T; t++) if (!db.valid[t]) sd[t] = Infinity;
+  for (let t = 0; t < T; t++) if (!db.valid[t] || (candMask && !candMask[t])) sd[t] = Infinity;
 
   let nObs = 0;
   for (let k = 0; k < 3; k++) nObs += circ[k].length + ell[k].length;

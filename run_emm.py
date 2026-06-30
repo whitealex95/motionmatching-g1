@@ -54,7 +54,8 @@ def main():
     ctrl = EMMController(db, env=env, max_speed=EC.MAX_SPEED, search_time=EC.SEARCH_TIME,
                         inert_halflife=EC.INERT_HALFLIFE, vel_halflife=EC.VEL_HALFLIFE,
                         rot_halflife=EC.ROT_HALFLIFE, penalty_weight=EC.PENALTY_WEIGHT,
-                        evasion=EC.EVASION, anticipation=EC.ANTICIPATION)
+                        evasion=EC.EVASION, anticipation=EC.ANTICIPATION,
+                        trigger_dist=EC.JUMP_TRIGGER_DIST)
     # Spawn a couple of metres before the first hurdle, facing down the lane
     # (also where Space returns the G1).
     ctrl.set_spawn(-2.5, 0.0, 0.0)

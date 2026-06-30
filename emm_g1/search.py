@@ -102,16 +102,22 @@ def _feature_check(db, i, sqr, best_total, penalty_weight, circ, ell, threshold,
 
 
 def search_env(db, Xq, weights, penalty_weight, circ, ell, threshold,
-               height_mode=False):
+               height_mode=False, cand_mask=None):
     """Exact branch-and-bound search with obstacle penalization.
 
     Returns the best frame index. With VarianceFactor=1 Unity scans every valid
     frame; we replicate that exactly by sorting valid frames on static distance
     (a lower bound, since penalty >= 0) and stopping once the static distance is
     no longer below the best total found.
+
+    ``cand_mask`` (bool, T) optionally restricts the candidate pool -- EMM passes
+    a locomotion-only mask so the search never matches into a jump clip (jumps are
+    a separate skill bucket entered via the obstacle trigger, see controller).
     """
     prepare(db)
     valid = db['valid']
+    if cand_mask is not None:
+        valid = valid & cand_mask
     sdist = static_distances(db['Xn'], Xq, weights)
     sdist = np.where(valid, sdist, np.inf)
 

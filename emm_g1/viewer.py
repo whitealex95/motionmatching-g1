@@ -60,7 +60,11 @@ class EMMViewer:
         self.opt = mujoco.MjvOption()
         self.scene = mujoco.MjvScene(model, maxgeom=10000)
         self.ctx = mujoco.MjrContext(model, mujoco.mjtFontScale.mjFONTSCALE_150)
-        self.cam.azimuth = 135.0; self.cam.elevation = -20.0
+        # Behind the spawn, looking down the +x hurdle lane (the hurdles are ahead in
+        # view), so WASD is intuitive: W walks forward into the screen toward the
+        # hurdles, A/D strafe across the lane. (The old default, azimuth 135, ran the
+        # lane diagonally so W drifted off it.) Drag to orbit.
+        self.cam.azimuth = 0.0; self.cam.elevation = -12.0
         self.cam.distance = 4.5; self.cam.lookat[:] = [0.0, 0.0, 0.8]
 
         self.held = set(); self.shift = False
@@ -114,7 +118,10 @@ class EMMViewer:
 
     # --- per-frame command -> (left_stick, right_stick) ---
     def _command(self):
-        fwd = math.radians(self.cam.azimuth + 180.0)
+        # "into the screen" heading: at the default azimuth 0 this is world +x, so W
+        # walks the character forward down the +x lane toward the hurdles it can see
+        # ahead (and the arrow keys face that way too).
+        fwd = math.radians(self.cam.azimuth)
         right = fwd - math.pi / 2.0
         fdir = np.array([math.cos(fwd), math.sin(fwd), 0.0])
         rdir = np.array([math.cos(right), math.sin(right), 0.0])

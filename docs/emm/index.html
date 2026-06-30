@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <!-- Served at /emm/ (this file is docs/emm/index.html). The base href makes every
+       document-relative path (script src, importmap, and the fetch() of data files,
+       which resolve against the document URL) resolve from docs/ -- so the shared
+       js/, vendor/ and data/ folders are reused, none duplicated. -->
+  <base href="../">
   <title>G1 Environment-aware Motion Matching — auto-jump demo</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #8f877c;

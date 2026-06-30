@@ -42,9 +42,11 @@ function start(bodies, mm, meta, meshMeta, meshBuf) {
 
   const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 200);
   camera.up.set(0, 0, 1);
-  camera.position.set(2.8, -3.0, 1.8);
+  // Behind the spawn, looking down the +x hurdle lane, so the camera-relative WASD
+  // is intuitive: W walks forward toward the hurdles ahead. (Drag to orbit.)
+  camera.position.set(-6.0, 0.0, 2.0);
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(-2.0, 0, 0.8);
+  controls.target.set(-2.5, 0, 0.8);
   controls.enablePan = false;
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x554b40, 0.9));

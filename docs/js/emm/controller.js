@@ -7,6 +7,7 @@
 import { quat, v3 } from '../quat.js';
 import { Environment } from './obstacles.js';
 import { searchEnv } from './search.js';
+import { jumpIndex } from './jumps.js';
 import * as eg from './ellipse_geom.js';
 import {
   decaySpringDamper, decaySpringDamperScalar,
@@ -54,6 +55,16 @@ export class EMMController {
     this.w0 = Array.from(A.weights);          // base 27 weights
     this.startDirW = this.w0[6];
     this.env = new Environment(meta.obstacles, meta.threshold);
+
+    // --- Jump skill bucket (separate from locomotion, like mm_g1): the search runs
+    // over locomotion frames only (locoMask); the jump is entered through its run-up
+    // when an obstacle crosses triggerDist ahead -- the obstacle replaces the J key. ---
+    const ji = jumpIndex(A, this.clipNames);
+    this.jumpEnter = ji.enter; this.landOf = ji.landOf; this.endOf = ji.endOf;
+    this.locoMask = new Uint8Array(A.T);
+    for (let f = 0; f < A.T; f++) this.locoMask[f] = A.clip_is_jump[A.clip_id[f]] === 1 ? 0 : 1;
+    this.triggerDist = meta.trigger_dist !== undefined ? meta.trigger_dist : 0.8;
+
     this.reset();
   }
 
@@ -72,6 +83,7 @@ export class EMMController {
     this.offDof = new Array(29).fill(0); this.offDofVel = new Array(29).fill(0);
     this.offH = 0; this.offHVel = 0;
     this.searchTimer = 0; this.targetSpeed = 0;
+    this.jumpLocked = 0; this.prevFd = Infinity;
     this.w = this.w0.slice();
     this.Tpos = this.Ttimes.map(() => this.rootPos.slice());
     this.Tdir = this.Ttimes.map(() => this.desiredDir.slice());
@@ -85,8 +97,49 @@ export class EMMController {
 
   get cur() { return this.animFrame; }
   clipName() { return this.clipNames[this.animClip]; }
-  get jumping() {
-    return this.clipIsJump[this.animClip] === 1 && this.rootPosDB[this.animFrame * 3 + 2] > 0.95;
+  // True only while riding the jump skill (run-up -> flight -> landing).
+  get jumping() { return this.jumpLocked > 0; }
+
+  // -- jump bucket (obstacle-triggered, mm_g1-style run-up + lock) --
+  // Nearest forward distance (m) to an obstacle whose height band a standing body
+  // overlaps, along the current facing; Infinity if none ahead. Arms the auto-jump.
+  _forwardObstacleDist() {
+    const fdir = [Math.cos(this.rootYaw), Math.sin(this.rootYaw)];
+    const perp = [-fdir[1], fdir[0]];
+    let best = Infinity;
+    for (const o of this.env.obs) {
+      if (o.h[0] > 1.3 || o.h[1] < 0.0) continue;       // not in standing-body band
+      const relx = o.center[0] - this.rootPos[0], rely = o.center[1] - this.rootPos[1];
+      const fwd = relx * fdir[0] + rely * fdir[1];
+      if (fwd <= 0.0) continue;                          // behind us
+      const reach = (o.isEllipse ? Math.max(o.ext[0], o.ext[1]) : o.radius) + 0.5;
+      if (Math.abs(relx * perp[0] + rely * perp[1]) > reach) continue;   // off to the side
+      if (fwd < best) best = fwd;
+    }
+    return best;
+  }
+
+  // Run-up frame whose features best continue the current pose (smooth take-off).
+  _bestJumpEntry() {
+    if (this.jumpEnter.length === 0) return null;
+    const cb = this.animFrame * 27;
+    let best = null, bd = Infinity;
+    for (const f of this.jumpEnter) {
+      const fb = f * 27; let d = 0;
+      for (let i = 0; i < 27; i++) { const x = this.Xn[fb + i] - this.Xn[cb + i]; d += x * x; }
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+
+  // Inertialize the pose discontinuity from the current frame into frame b, move there.
+  _switchTo(b) {
+    const a = this.animFrame;
+    const da = this._row(this.dof, 29, a), dbb = this._row(this.dof, 29, b);
+    const va = this._row(this.dofVel, 29, a), vb = this._row(this.dofVel, 29, b);
+    for (let i = 0; i < 29; i++) { this.offDof[i] += da[i] - dbb[i]; this.offDofVel[i] += va[i] - vb[i]; }
+    this.offH += this.rootPosDB[a * 3 + 2] - this.rootPosDB[b * 3 + 2];
+    this.animFrame = b; this.animClip = this._clipOf(b);
   }
 
   _query(qhCtrl) {
@@ -125,11 +178,28 @@ export class EMMController {
     const tapWorld = this.Tpos.map((p) => [p[0], p[1]]);
     const { circ, ell } = this.env.getNearby([this.rootPos[0], this.rootPos[1]], this.rootYaw, tapWorld, this.horizons);
 
-    if (this.searchTimer <= 0) {
+    // Jump bucket trigger: arm a jump the instant a wall crosses triggerDist ahead,
+    // entered from its best-matching run-up and ridden through flight + landing
+    // (search locked), exactly like mm_g1's J key but auto-triggered by the obstacle.
+    if (this.jumpLocked === 0) {
+      const fd = this._forwardObstacleDist();
+      if (this.prevFd > this.triggerDist && this.triggerDist >= fd) {
+        const entry = this._bestJumpEntry();
+        if (entry !== null) {
+          this._switchTo(entry);
+          this.jumpLocked = Math.max(1, this.endOf.get(entry) - entry);
+          this.searchTimer = this.SEARCH_TIME;
+        }
+      }
+      this.prevFd = fd;
+    }
+
+    // Search (rate limited, LOCOMOTION bucket only): env-aware nearest pose.
+    if (this.jumpLocked === 0 && this.searchTimer <= 0) {
       const qhCtrl = yaw(this.rootYaw);
       const Xq = this._query(qhCtrl);
       const pw = this.penaltyWeight * this.anticipation * Math.max(0.5, this.targetSpeed);
-      const best = searchEnv(this.db, Xq, this.w, pw, circ, ell, this.threshold, this.heightMode);
+      const best = searchEnv(this.db, Xq, this.w, pw, circ, ell, this.threshold, this.heightMode, this.locoMask);
       if (best !== this.animFrame) {
         const a = this.animFrame;
         const da = this._row(this.dof, 29, a), dbb = this._row(this.dof, 29, best);
@@ -146,7 +216,12 @@ export class EMMController {
     // advance playhead
     this.animFrame = clamp(this.animFrame + 1, this.starts[this.animClip], this.stops[this.animClip] - 1);
     this.searchTimer -= DT;
-    if (this.animFrame >= this.stops[this.animClip] - 2) this.searchTimer = 0;
+    if (this.jumpLocked > 0) {
+      this.jumpLocked -= 1;
+      if (this.jumpLocked === 0) this.searchTimer = 0;     // search out of the jump at once
+    } else if (this.animFrame >= this.stops[this.animClip] - 2) {
+      this.searchTimer = 0;
+    }
     const f = this.animFrame;
 
     // integrate root from matched clip root velocity

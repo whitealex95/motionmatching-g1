@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the EMM (auto-jump) database for the browser demo (docs/emm.html).
+"""Export the EMM (auto-jump) database for the browser demo (docs/emm/, served at /emm).
 
 Run from the repo root with the mujoco env, e.g.:
     ~/miniconda3/envs/deploy_mujoco/bin/python tools/export_emm_web_data.py
@@ -89,6 +89,7 @@ def export_emm(db):
         search_time=EC.SEARCH_TIME, inert_halflife=EC.INERT_HALFLIFE,
         vel_halflife=EC.VEL_HALFLIFE, rot_halflife=EC.ROT_HALFLIFE,
         penalty_weight=EC.PENALTY_WEIGHT, evasion=EC.EVASION, anticipation=EC.ANTICIPATION,
+        trigger_dist=EC.JUMP_TRIGGER_DIST,
         threshold=EC.OBSTACLE_THRESHOLD, nearby_radius=EC.NEARBY_RADIUS,
         height_mode=True, max_ellipse_length=0.9,
         crowd_weights=[1.0, 0.4, 0.1],

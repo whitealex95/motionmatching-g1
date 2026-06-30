@@ -26,6 +26,16 @@ PENALTY_WEIGHT = 60.0    # base obstacle-penalization weight (tuned for clean ho
 EVASION = 0.54           # facing-weight floor near obstacles (height scenario)
 ANTICIPATION = 2.0       # scales penalty influence with desired speed
 
+# --- Auto-jump trigger (the "jump bucket") -------------------------------------
+# Locomotion and the jump skill live in SEPARATE buckets (like mm_g1): the search
+# runs over locomotion frames only, and the jump is entered through its run-up when
+# an obstacle whose height band the standing body overlaps sits ahead. This replaces
+# mm_g1's J key. The take-off is AUTO-TIMED: the jump is armed the instant the wall
+# crosses JUMP_TRIGGER_DIST metres ahead, so every wall is taken off from the same
+# distance and the flight's whole-body-clear window (a bit after the apex) lands over
+# the wall's height band. Tuned on the 0.30 m hurdle so the body clears with margin.
+JUMP_TRIGGER_DIST = 0.80   # forward distance to the wall at which the jump fires (m)
+
 # --- Obstacle field (the "adequate obstacles" added to the interactive scene) --
 # Each hurdle is a LOW, THIN, WIDE WALL: an ellipse footprint long along the wall
 # (lateral) and thin across it, with an absolute height band (hmin, hmax) above
@@ -41,7 +51,11 @@ PENALTY_W = PENALTY_WEIGHT       # alias
 
 WALL_HEIGHT = (0.0, 0.30)        # low bar: clearly below standing body height
 WALL_HALF_LEN = 2.5              # half-length ALONG the wall (lateral span 5 m)
-WALL_HALF_THICK = 0.28           # half-thickness ACROSS the wall (thin!)
+WALL_HALF_THICK = 0.10           # half-thickness ACROSS the wall (0.20 m, a hurdle BAR).
+                                 # The jump clip clears 0.30 m only over a ~0.5 m-wide
+                                 # forward window, so a thicker wall catches a foot at its
+                                 # edges; a thin bar clears with comfortable margin. See
+                                 # docs/EMM_AUTOJUMP_FIX.md ("it's the thickness, not the height").
 
 # A hurdle LANE down +x: hold W from spawn and the G1 clears each in turn. A wall
 # is (cx, cy, axis_x, axis_y) -- ``axis`` is the wall's long (lateral) direction.
