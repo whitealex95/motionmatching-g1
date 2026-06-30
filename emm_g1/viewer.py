@@ -220,6 +220,8 @@ class EMMViewer:
         title = f"{gait}   {s:.1f} m/s   (env-aware: jumps obstacles automatically)"
         body = (f"clip: {self.ctrl.clip_name()}\n"
                 f"frame: {self.ctrl.cur}\n"
+                f"motion-matching query: {self.ctrl.search_ms:.2f} ms "
+                f"(every {self.ctrl.SEARCH_TIME * 1000:.0f} ms)\n"
                 f"command gizmo: {'on' if self.show_traj else 'off'} (T)\n"
                 "WALK (Shift) into a wall and the G1 hops it -- no jump key\n"
                 "WASD move | arrows face | Shift walk | Space reset\n"

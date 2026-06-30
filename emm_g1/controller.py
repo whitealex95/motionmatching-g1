@@ -13,6 +13,8 @@ behaviour.
 quat), the same layout ``mm_g1`` produces, so the viewer / web port are uniform.
 """
 
+import time
+
 import numpy as np
 
 from . import quat
@@ -109,6 +111,7 @@ class EMMController:
         self.searchTimer = 0.0
         self.jump_locked = 0
         self._prev_fd = np.inf
+        self.search_ms = 0.0      # wall-clock of the last env-aware search (query)
         self.target_speed = 0.0
         self.w = self.w0.copy()
         self.Tpos = np.tile(self.rootPos, (len(g1.HORIZONS), 1))
@@ -228,9 +231,11 @@ class EMMController:
             qh_ctrl = g1.yaw_quat(self.rootYaw)
             Xq = self._query(Tpos, Tdir, qh_ctrl)
             pw = self.penalty_weight * self.anticipation * max(0.5, self.target_speed)
+            _t0 = time.perf_counter()
             best = S.search_env(db, Xq, self.w, pw, circ, ell,
                                 self.env.threshold if self.env else 0.6,
                                 self.height_mode, cand_mask=self.loco_mask)
+            self.search_ms = (time.perf_counter() - _t0) * 1000.0
             if best != self.animFrame:
                 self.offDof = (self.offDof + self.dof[self.animFrame]) - self.dof[best]
                 self.offDofVel = (self.offDofVel + self.dofVel[self.animFrame]) - self.dofVel[best]
