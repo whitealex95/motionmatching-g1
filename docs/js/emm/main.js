@@ -198,7 +198,8 @@ function start(bodies, mm, meta, meshMeta, meshBuf) {
     const gait = mm.jumping ? 'JUMP' : (lastSpeed > mm.MAX_SPEED * 0.7 ? 'RUN' : (lastSpeed > 1e-3 ? 'WALK' : 'IDLE'));
     setHud(`${gait}  ${lastSpeed.toFixed(1)} m/s   (env-aware: jumps obstacles automatically)\n` +
       `clip: ${mm.clipName()}   frame ${mm.cur}\n` +
-      `\nrender ${fps.toFixed(0)} fps · sim ${(1 / DT).toFixed(0)} Hz · search every ${(mm.SEARCH_TIME * 1000).toFixed(0)} ms\n` +
+      `\nrender ${fps.toFixed(0)} fps · sim ${(1 / DT).toFixed(0)} Hz · ` +
+      `motion-matching query ${mm.searchMs.toFixed(2)} ms (every ${(mm.SEARCH_TIME * 1000).toFixed(0)} ms)\n` +
       `\nWASD move · arrows face · Shift walk · Space reset · T gizmo · drag/scroll camera\n` +
       `WALK (Shift) into a wall and the G1 hops it by itself — no jump key`);
     renderer.render(scene, camera);

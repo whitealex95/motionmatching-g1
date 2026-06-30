@@ -84,6 +84,7 @@ export class EMMController {
     this.offH = 0; this.offHVel = 0;
     this.searchTimer = 0; this.targetSpeed = 0;
     this.jumpLocked = 0; this.prevFd = Infinity;
+    this.searchMs = 0;        // wall-clock of the last env-aware search (query)
     this.w = this.w0.slice();
     this.Tpos = this.Ttimes.map(() => this.rootPos.slice());
     this.Tdir = this.Ttimes.map(() => this.desiredDir.slice());
@@ -199,7 +200,9 @@ export class EMMController {
       const qhCtrl = yaw(this.rootYaw);
       const Xq = this._query(qhCtrl);
       const pw = this.penaltyWeight * this.anticipation * Math.max(0.5, this.targetSpeed);
+      const t0 = performance.now();
       const best = searchEnv(this.db, Xq, this.w, pw, circ, ell, this.threshold, this.heightMode, this.locoMask);
+      this.searchMs = performance.now() - t0;
       if (best !== this.animFrame) {
         const a = this.animFrame;
         const da = this._row(this.dof, 29, a), dbb = this._row(this.dof, 29, best);
